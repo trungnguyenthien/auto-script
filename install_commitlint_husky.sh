@@ -20,8 +20,9 @@
 # 5. Tạo các Git hooks cần thiết với template cơ bản
 #
 # CÁCH SỬ DỤNG:
-# chmod +x setup-commitlint-husky.sh
-# ./setup-commitlint-husky.sh
+# chmod +x install_commitlint_husky.sh && ./install_commitlint_husky.sh
+# HOẶC:
+# curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_commitlint_husky.sh -o install_commitlint_husky.sh && chmod +x install_commitlint_husky.sh && ./install_commitlint_husky.sh && rm install_commitlint_husky.sh
 #
 # TEST KẾT QUẢ THỰC HIỆN:
 # 1. Kiểm tra cài đặt:
