@@ -1,40 +1,32 @@
 #!/usr/bin/env bash
-# kc_export_full_v2.sh (fixed)
-# Liệt kê và export certificate (public + private key) từ login & system keychains
-# Compat: macOS bash (default). Avoids problematic conditional patterns.
+# kc_export_full_v4.sh
+# List + export certs from login & system keychain.
+# If export fails, offers to retry with sudo/unlock. Explains non-exportable cases.
 
 set -euo pipefail
 
 KEYCHAIN_LOGIN="$HOME/Library/Keychains/login.keychain-db"
 KEYCHAIN_SYSTEM="/Library/Keychains/System.keychain"
 EXPORT_DIR="./exported_certs"
-
 mkdir -p "$EXPORT_DIR"
 
-echo "🔍 Listing all certificates from Login & System keychains..."
+echo "🔍 Scanning Login & System keychains..."
 printf "%-4s %-8s %-40s %s\n" "Idx" "Type" "SHA1" "Common Name"
 printf "%-4s %-8s %-40s %s\n" "----" "--------" "----------------------------------------" "-------------------------------"
 
 idx=1
 declare -a certs_list=()
 
-# Function: list for a keychain (tries identities first, then certificates)
 list_certs() {
-  local type="$1"
-  local keychain="$2"
-
-  # 1) Try identities (those with private key)
+  local type="$1"; local keychain="$2"
   local ids
   ids=$(security find-identity -p codesigning -v "$keychain" 2>/dev/null || true)
 
-  # Use grep to check if output says "0 valid identities found"
   if [ -n "$ids" ] && ! printf "%s" "$ids" | grep -qi "0 valid identities found"; then
-    # parse lines like: "  1) <SHA1> "Common Name""
     while IFS= read -r line; do
       if printf "%s" "$line" | grep -qE '\)[[:space:]]*[0-9A-F]{40}'; then
         if [[ $line =~ ([0-9A-F]{40})[[:space:]]+\"([^\"]+)\" ]]; then
-          sha=${BASH_REMATCH[1]}
-          cn=${BASH_REMATCH[2]}
+          sha=${BASH_REMATCH[1]}; cn=${BASH_REMATCH[2]}
           printf "%-4s [%-6s] %-40s %s\n" "$idx" "$type" "$sha" "$cn"
           certs_list+=("$type|$sha|$cn")
           idx=$((idx+1))
@@ -43,33 +35,24 @@ list_certs() {
     done <<< "$ids"
   fi
 
-  # 2) Also parse certificates (to get SHA1/CN from system certs or non-identity certs)
-  # We will parse output from: security find-certificate -a -Z -p <keychain>
+  # Parse certificates to capture system-only public certs (SHA + CN)
   local certs
   certs=$(security find-certificate -a -Z -p "$keychain" 2>/dev/null || true)
   local cur_sha=""
   while IFS= read -r line; do
-    # Detect SHA-1 hash line
     if printf "%s" "$line" | grep -qE '^SHA-1'; then
-      # extract hex (3rd token usually)
       cur_sha=$(printf "%s" "$line" | awk '{print $3}' | tr 'a-f' 'A-F')
       continue
     fi
-    # Detect alis (Common Name) line: "alis"<blob>="..."
     if printf "%s" "$line" | grep -q '"alis"<blob>='; then
       cn=$(printf "%s" "$line" | sed -n 's/.*"alis"<blob>="\([^"]*\)".*/\1/p')
-      # If CN empty, skip
       [ -z "${cn:-}" ] && continue
-      # If sha empty, mark UNKNOWN
       [ -n "${cur_sha:-}" ] || cur_sha="UNKNOWN"
-      # Avoid duplicates: check if sha already in certs_list
+      # avoid duplicate sha
       local found=0
       for entry in "${certs_list[@]}"; do
         entry_sha=$(printf "%s" "$entry" | cut -d'|' -f2)
-        if [ "$entry_sha" = "$cur_sha" ]; then
-          found=1
-          break
-        fi
+        if [ "$entry_sha" = "$cur_sha" ]; then found=1; break; fi
       done
       if [ $found -eq 0 ]; then
         printf "%-4s [%-6s] %-40s %s\n" "$idx" "$type" "$cur_sha" "$cn"
@@ -88,71 +71,90 @@ echo "-----------------------------------------------"
 echo "Total certificates found: ${#certs_list[@]}"
 echo ""
 
-# Ask user whether to export
 read -p "👉 Enter certificate index to export (or press Enter to quit): " idx_input
-if [ -z "$idx_input" ]; then
-  echo "Exit without export."
-  exit 0
-fi
+if [ -z "$idx_input" ]; then echo "Exit."; exit 0; fi
+if ! printf "%s" "$idx_input" | grep -qE '^[0-9]+$'; then echo "Index must be numeric."; exit 1; fi
+if [ "$idx_input" -lt 1 ] || [ "$idx_input" -gt "${#certs_list[@]}" ]; then echo "Index out of range."; exit 1; fi
 
-# Validate numeric
-if ! printf "%s" "$idx_input" | grep -qE '^[0-9]+$'; then
-  echo "❌ Index must be a number."
-  exit 1
-fi
-
-if [ "$idx_input" -lt 1 ] || [ "$idx_input" -gt "${#certs_list[@]}" ]; then
-  echo "❌ Index out of range."
-  exit 1
-fi
-
-# Read passphrase for export .p12 (can be empty)
-read -s -p "🔑 Enter export passphrase (for .p12 file, leave empty for none): " pass_input
+read -s -p "🔑 Enter export passphrase for .p12 (leave empty for no passphrase): " pass_input
 echo ""
 
-# Export function
-export_certificate() {
-  local index="$1"
-  local passphrase="$2"
+IFS='|' read -r type sha cn <<< "${certs_list[$((idx_input-1))]}"
+keychain="${KEYCHAIN_LOGIN}"
+[ "$type" != "login" ] && keychain="$KEYCHAIN_SYSTEM"
+outfile="$EXPORT_DIR/$(printf '%s' "$cn" | tr ' /' '__').p12"
 
-  IFS='|' read -r type sha cn <<< "${certs_list[$((index-1))]}"
+echo "Exporting: $cn"
+echo " Type : $type"
+echo " SHA1 : $sha"
+echo " Out  : $outfile"
 
-  local keychain
-  if [ "$type" = "login" ]; then
-    keychain="$KEYCHAIN_LOGIN"
-  else
-    keychain="$KEYCHAIN_SYSTEM"
-  fi
-
-  local outfile="$EXPORT_DIR/$(printf '%s' "$cn" | tr ' /' '__').p12"
-
-  echo "Exporting: $cn"
-  echo " Type : $type"
-  echo " SHA1 : $sha"
-  echo " Out  : $outfile"
-
-  # Try export identities (private key + cert). If fails, fallback to export public cert only.
-  if [ -n "$passphrase" ]; then
-    if security export -k "$keychain" -t identities -f pkcs12 -o "$outfile" -P "$passphrase" -Z "$sha" >/dev/null 2>&1; then
-      echo "✅ Exported .p12: $outfile"
-      return 0
-    fi
-  else
-    if security export -k "$keychain" -t identities -f pkcs12 -o "$outfile" -Z "$sha" >/dev/null 2>&1; then
-      echo "✅ Exported .p12: $outfile"
-      return 0
-    fi
-  fi
-
-  # fallback: export public cert only to .cer file
-  local outcer="${outfile%.p12}.cer"
-  if security find-certificate -Z "$sha" -p "$keychain" > "$outcer" 2>/dev/null; then
-    echo "⚠️  Could not export private key (or not permitted). Public certificate saved: $outcer"
+# Try export normally (without sudo)
+try_export() {
+  local kc="$1"; local out="$2"; local pass="$3"; local fingerprint="$4"
+  # Always pass -P even if empty (security requires explicit -P)
+  if security export -k "$kc" -t identities -f pkcs12 -o "$out" -P "$pass" -Z "$fingerprint" >/dev/null 2>&1; then
     return 0
   fi
-
-  echo "❌ Export failed for $cn (sha=$sha). You may need to run with sudo or unlock the keychain."
   return 1
 }
 
-export_certificate "$idx_input" "$pass_input"
+if try_export "$keychain" "$outfile" "$pass_input" "$sha"; then
+  echo "✅ Exported .p12: $outfile"
+  exit 0
+fi
+
+# If failed, try to export with sudo after asking user
+echo "⚠️  Could not export private key without elevated privileges or private key not exportable."
+read -p "Do you want to retry with sudo/unlock (may ask for macOS password)? [y/N]: " yn
+yn=${yn:-N}
+if printf "%s" "$yn" | grep -qiE '^(y|yes)$'; then
+  echo "Attempting sudo unlock + export..."
+  # unlock system keychain if system
+  if [ "$type" != "login" ]; then
+    sudo security unlock-keychain /Library/Keychains/System.keychain || true
+  else
+    # unlock login keychain (current user) - may not be necessary
+    sudo security unlock-keychain "$KEYCHAIN_LOGIN" || true
+  fi
+
+  sudo_sh() {
+    # run security export with sudo; passphrase may be empty string
+    if sudo security export -k "$keychain" -t identities -f pkcs12 -o "$outfile" -P "${pass_input:-}" -Z "$sha" >/dev/null 2>&1; then
+      echo "✅ Exported .p12 (with sudo): $outfile"
+      exit 0
+    else
+      return 1
+    fi
+  }
+
+  if sudo_sh; then
+    exit 0
+  else
+    echo "⚠️  Export with sudo failed as well."
+    echo "Possible reasons:"
+    echo "  - Private key is not present in that keychain (only public certificate exists)."
+    echo "  - Private key is marked non-exportable or resides on a hardware token / Secure Enclave (T2/SEP/smartcard)."
+    echo "  - Access control prevents export even for root."
+    echo ""
+    echo "Diagnostic steps you can run:"
+    echo "  1) Check identities in login/system:"
+    echo "     security find-identity -p codesigning -v ~/Library/Keychains/login.keychain-db"
+    echo "     security find-identity -p codesigning -v /Library/Keychains/System.keychain"
+    echo "  2) Open Keychain Access GUI -> select certificate, expand it to see private key (icon key). If not shown, private key is not available here."
+    echo "  3) If private key on Secure Enclave or smartcard, export is impossible."
+    echo ""
+    echo "Script will now fallback to exporting public certificate only (PEM)."
+  fi
+fi
+
+# Fallback: export public certificate (.cer/.pem)
+outcer="${outfile%.p12}.cer"
+if security find-certificate -Z "$sha" -p "$keychain" > "$outcer" 2>/dev/null; then
+  echo "✅ Public certificate saved: $outcer"
+  echo "Note: private key not exported."
+  exit 0
+fi
+
+echo "❌ Final export attempt failed. Please check keychain permissions or whether private key is on hardware token."
+exit 1
