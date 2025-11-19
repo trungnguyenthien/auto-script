@@ -329,17 +329,16 @@ else
     fi
     
     if [ ! -d "$FLUTTER_HOME" ]; then
-        echo -e "${YELLOW}Downloading Flutter ${FLUTTER_VERSION} (this may take a few minutes)...${NC}"
-        
-        # Detect architecture
+        # Check if running on Apple Silicon
         ARCH=$(uname -m)
-        if [[ "$ARCH" == "arm64" ]]; then
-            FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_arm64_${FLUTTER_VERSION}-stable.zip"
-            echo -e "${BLUE}Detected Apple Silicon (ARM64)${NC}"
-        else
-            FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip"
-            echo -e "${BLUE}Detected Intel (x64)${NC}"
+        if [[ "$ARCH" != "arm64" ]]; then
+            echo -e "${RED}Error: This script only supports Apple Silicon (ARM64) Macs.${NC}"
+            echo -e "${YELLOW}For Intel Macs, please use the official Flutter installation guide.${NC}"
+            exit 1
         fi
+        
+        echo -e "${YELLOW}Downloading Flutter ${FLUTTER_VERSION} for Apple Silicon (this may take a few minutes)...${NC}"
+        FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_arm64_${FLUTTER_VERSION}-stable.zip"
         
         curl -L --retry 5 --retry-delay 3 "$FLUTTER_URL" -o /tmp/flutter.zip
 
