@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Configuration
-FLUTTER_VERSION="3.35.6"
+FLUTTER_VERSION="3.38.2"
 CMDLINE_TOOLS_VERSION="11076708"
 ANDROID_HOME="$HOME/Library/Android/sdk"
 FLUTTER_HOME="$HOME/flutter"
@@ -330,9 +330,18 @@ else
     
     if [ ! -d "$FLUTTER_HOME" ]; then
         echo -e "${YELLOW}Downloading Flutter ${FLUTTER_VERSION} (this may take a few minutes)...${NC}"
-        curl -L --retry 5 --retry-delay 3 \
-            "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip" \
-            -o /tmp/flutter.zip
+        
+        # Detect architecture
+        ARCH=$(uname -m)
+        if [[ "$ARCH" == "arm64" ]]; then
+            FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_arm64_${FLUTTER_VERSION}-stable.zip"
+            echo -e "${BLUE}Detected Apple Silicon (ARM64)${NC}"
+        else
+            FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip"
+            echo -e "${BLUE}Detected Intel (x64)${NC}"
+        fi
+        
+        curl -L --retry 5 --retry-delay 3 "$FLUTTER_URL" -o /tmp/flutter.zip
 
         echo -e "${YELLOW}Extracting Flutter...${NC}"
         unzip -q /tmp/flutter.zip -d "$HOME"
