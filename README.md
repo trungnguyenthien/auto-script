@@ -11,5 +11,5 @@ curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/h
 
 ## install flutter env
 ```sh
-bash <(curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_flutter_env.sh)
+curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_flutter_env.sh -o install_flutter_env.sh && chmod +x install_flutter_env.sh && ./install_flutter_env.sh && rm install_flutter_env.sh
 ```
