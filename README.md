@@ -8,3 +8,8 @@ curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/h
 ```sh
 curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_ruby.sh -o install_ruby.sh && chmod +x install_ruby.sh && ./install_ruby.sh && rm install_ruby.sh
 ```
+
+## install flutter env
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_flutter_env.sh)
+```
