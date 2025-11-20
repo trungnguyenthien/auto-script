@@ -14,7 +14,6 @@ FLUTTER_VERSION="3.38.2"
 CMDLINE_TOOLS_VERSION="11076708"
 ANDROID_HOME="$HOME/Library/Android/sdk"
 FLUTTER_HOME="$HOME/flutter"
-COCOAPODS_VERSION="1.15.2"
 INSTALL_LOG="$HOME/.flutter_env_install.log"
 
 # Function to log completed steps
@@ -36,19 +35,47 @@ skip_step() {
     echo -e "${GREEN}✓ $1 (already completed, skipping)${NC}"
 }
 
+# Function to request sudo password upfront
+request_sudo() {
+    echo -e "${YELLOW}This script requires sudo access for some operations.${NC}"
+    echo -e "${YELLOW}Please enter your password once:${NC}"
+    sudo -v
+    
+    # Keep sudo alive in background
+    while true; do
+        sudo -n true
+        sleep 50
+        kill -0 "$$" || exit
+    done 2>/dev/null &
+}
+
 echo -e "${BLUE}=== Flutter Development Environment Installation for macOS ===${NC}\n"
-echo -e "${YELLOW}This script will install:${NC}"
-echo -e "  - Homebrew (if not installed)"
-echo -e "  - Java 17 (OpenJDK)"
-echo -e "  - Ruby & Bundler"
-echo -e "  - CocoaPods (for iOS development)"
-echo -e "  - Xcode Command Line Tools"
-echo -e "  - Android SDK (cmdline-tools, platform-tools, platforms, build-tools)"
-echo -e "  - Flutter SDK ${FLUTTER_VERSION}"
+echo -e "${YELLOW}This script will install the following tools:${NC}\n"
+echo -e "${GREEN}Core Tools:${NC}"
+echo -e "  • Homebrew - Package manager for macOS"
+echo -e "  • Xcode Command Line Tools - Essential build tools"
+echo -e "  • Java 17 (OpenJDK) - Required for Android development"
+echo -e ""
+echo -e "${GREEN}iOS Development:${NC}"
+echo -e "  • Ruby (via Homebrew) - Latest stable version"
+echo -e "  • CocoaPods 1.16.2+ (via Homebrew) - iOS dependency manager"
+echo -e "  • libimobiledevice, ideviceinstaller, ios-deploy - iOS build tools"
+echo -e ""
+echo -e "${GREEN}Android Development:${NC}"
+echo -e "  • Android SDK Command Line Tools ${CMDLINE_TOOLS_VERSION}"
+echo -e "  • Android Platform Tools"
+echo -e "  • Android Platforms: API 34, 35, 36"
+echo -e "  • Android Build Tools 35.0.0"
+echo -e ""
+echo -e "${GREEN}Flutter Framework:${NC}"
+echo -e "  • Flutter SDK ${FLUTTER_VERSION} (Apple Silicon optimized)"
 echo -e "\n${BLUE}Installation log: $INSTALL_LOG${NC}"
 echo -e "${YELLOW}To reset and reinstall everything, delete: rm $INSTALL_LOG${NC}"
 echo -e "\n${YELLOW}Press Enter to continue or Ctrl+C to cancel...${NC}"
 read
+
+# Request sudo password once at the beginning
+request_sudo
 
 # Detect shell
 if [ -n "$ZSH_VERSION" ]; then
@@ -66,7 +93,7 @@ if is_step_completed "homebrew"; then
     skip_step "Homebrew already installed"
 elif ! command -v brew &> /dev/null; then
     echo -e "${YELLOW}Installing Homebrew...${NC}"
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     
     # Add Homebrew to PATH
     if [[ $(uname -m) == 'arm64' ]]; then
@@ -81,8 +108,17 @@ elif ! command -v brew &> /dev/null; then
     echo -e "${GREEN}✓ Homebrew installed${NC}"
 else
     echo -e "${GREEN}✓ Homebrew already installed${NC}"
-    brew update
     log_step "homebrew"
+fi
+
+# Update Homebrew
+if ! is_step_completed "homebrew-update"; then
+    echo -e "${YELLOW}Updating Homebrew...${NC}"
+    brew update
+    log_step "homebrew-update"
+    echo -e "${GREEN}✓ Homebrew updated${NC}"
+else
+    skip_step "Homebrew update"
 fi
 
 # ========== Step 2: Install Xcode Command Line Tools ==========
@@ -92,14 +128,26 @@ if is_step_completed "xcode-cli"; then
     skip_step "Xcode Command Line Tools"
 elif ! xcode-select -p &> /dev/null; then
     echo -e "${YELLOW}Installing Xcode Command Line Tools...${NC}"
-    echo -e "${YELLOW}A dialog will appear. Please click 'Install' and wait for it to complete.${NC}"
-    xcode-select --install
     
-    # Wait for installation to complete
-    echo -e "${YELLOW}Waiting for Xcode Command Line Tools installation...${NC}"
-    until xcode-select -p &> /dev/null; do
-        sleep 5
-    done
+    # Try to install via softwareupdate (non-interactive)
+    echo -e "${YELLOW}Attempting automatic installation...${NC}"
+    sudo rm -rf /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress 2>/dev/null || true
+    touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+    
+    PROD=$(softwareupdate -l | grep "\*.*Command Line" | tail -n 1 | sed 's/^[^C]* //')
+    if [ -n "$PROD" ]; then
+        sudo softwareupdate -i "$PROD" --verbose
+    else
+        # Fallback to interactive installation
+        echo -e "${YELLOW}A dialog will appear. Please click 'Install' and wait for it to complete.${NC}"
+        xcode-select --install
+        
+        # Wait for installation to complete
+        echo -e "${YELLOW}Waiting for Xcode Command Line Tools installation...${NC}"
+        until xcode-select -p &> /dev/null; do
+            sleep 5
+        done
+    fi
     
     # Accept license
     sudo xcodebuild -license accept 2>/dev/null || true
@@ -168,85 +216,71 @@ fi
 export JAVA_HOME="$JAVA_HOME_PATH"
 export PATH="$JAVA_HOME/bin:$PATH"
 
-# ========== Step 4: Install Ruby & Bundler ==========
-echo -e "\n${BLUE}[Step 4/7] Installing Ruby & Bundler...${NC}"
+# ========== Step 4: Install Ruby via Homebrew ==========
+echo -e "\n${BLUE}[Step 4/7] Installing Ruby via Homebrew...${NC}"
 
 if is_step_completed "ruby"; then
     skip_step "Ruby"
-elif ! command -v ruby &> /dev/null || [[ $(ruby --version) == *"2.6"* ]]; then
-    brew install ruby
+else
+    # Check if Homebrew Ruby is installed
+    if ! brew list ruby &> /dev/null; then
+        echo -e "${YELLOW}Installing Ruby via Homebrew...${NC}"
+        brew install ruby
+    else
+        echo -e "${GREEN}✓ Ruby already installed via Homebrew${NC}"
+    fi
     
     # Add Ruby to PATH
     if [[ $(uname -m) == 'arm64' ]]; then
         RUBY_PATH="/opt/homebrew/opt/ruby/bin"
+        GEM_PATH="/opt/homebrew/lib/ruby/gems"
     else
         RUBY_PATH="/usr/local/opt/ruby/bin"
+        GEM_PATH="/usr/local/lib/ruby/gems"
     fi
     
-    if ! grep -q "$RUBY_PATH" "$SHELL_RC" 2>/dev/null; then
+    if ! grep -q "# Ruby configuration" "$SHELL_RC" 2>/dev/null; then
         echo "" >> "$SHELL_RC"
         echo "# Ruby configuration" >> "$SHELL_RC"
         echo "export PATH=\"$RUBY_PATH:\$PATH\"" >> "$SHELL_RC"
+        echo "export LDFLAGS=\"-L$(brew --prefix ruby)/lib\"" >> "$SHELL_RC"
+        echo "export CPPFLAGS=\"-I$(brew --prefix ruby)/include\"" >> "$SHELL_RC"
     fi
     export PATH="$RUBY_PATH:$PATH"
     
     log_step "ruby"
     echo -e "${GREEN}✓ Ruby installed${NC}"
-else
-    echo -e "${GREEN}✓ Ruby already installed${NC}"
-    log_step "ruby"
 fi
 
-# Install Bundler
-if is_step_completed "bundler"; then
-    skip_step "Bundler"
-elif ! command -v bundle &> /dev/null; then
-    gem install bundler --no-document
-    log_step "bundler"
-    echo -e "${GREEN}✓ Bundler installed${NC}"
-else
-    echo -e "${GREEN}✓ Bundler already installed${NC}"
-    log_step "bundler"
-fi
-
-# ========== Step 5: Install CocoaPods ==========
-echo -e "\n${BLUE}[Step 5/7] Installing CocoaPods (iOS dependency manager)...${NC}"
+# ========== Step 5: Install CocoaPods via Homebrew ==========
+echo -e "\n${BLUE}[Step 5/7] Installing CocoaPods via Homebrew...${NC}"
 
 if is_step_completed "cocoapods"; then
     skip_step "CocoaPods"
-elif ! command -v pod &> /dev/null; then
-    echo -e "${YELLOW}Installing CocoaPods ${COCOAPODS_VERSION}...${NC}"
-    sudo gem install cocoapods -v ${COCOAPODS_VERSION} --no-document
-    
-    # Reload shell to get pod command
-    export PATH="/usr/local/bin:$PATH"
-    hash -r 2>/dev/null || true
+else
+    # Install CocoaPods via Homebrew
+    if ! brew list cocoapods &> /dev/null; then
+        echo -e "${YELLOW}Installing CocoaPods via Homebrew...${NC}"
+        brew install cocoapods
+    else
+        echo -e "${GREEN}✓ CocoaPods already installed via Homebrew${NC}"
+    fi
     
     # Verify pod is available
     if command -v pod &> /dev/null; then
+        POD_VERSION=$(pod --version)
         log_step "cocoapods"
-        echo -e "${GREEN}✓ CocoaPods installed${NC}"
+        echo -e "${GREEN}✓ CocoaPods installed (version: ${POD_VERSION})${NC}"
         
         # Setup CocoaPods
         if ! is_step_completed "cocoapods-setup"; then
             echo -e "${YELLOW}Setting up CocoaPods (this may take a few minutes)...${NC}"
-            pod setup
+            pod setup --verbose
             log_step "cocoapods-setup"
         fi
     else
         echo -e "${YELLOW}⚠️  CocoaPods installed but not in PATH yet${NC}"
         echo -e "${YELLOW}⚠️  It will be available after you restart terminal or run: source $SHELL_RC${NC}"
-    fi
-else
-    POD_VERSION=$(pod --version)
-    echo -e "${GREEN}✓ CocoaPods already installed (version: ${POD_VERSION})${NC}"
-    log_step "cocoapods"
-    
-    # Update CocoaPods repo if needed
-    if ! is_step_completed "cocoapods-update"; then
-        echo -e "${YELLOW}Updating CocoaPods repo...${NC}"
-        pod repo update || echo -e "${YELLOW}⚠️  CocoaPods repo update skipped${NC}"
-        log_step "cocoapods-update"
     fi
 fi
 
@@ -363,7 +397,7 @@ export PATH="$FLUTTER_HOME/bin:$PATH"
 if ! is_step_completed "flutter-config"; then
     echo -e "${YELLOW}Configuring Flutter...${NC}"
     flutter config --no-analytics
-    flutter doctor --android-licenses
+    yes | flutter doctor --android-licenses > /dev/null 2>&1 || true
     flutter precache --android
     flutter precache --ios
     log_step "flutter-config"
@@ -384,7 +418,6 @@ if [ -d "/Applications/Xcode.app" ]; then
 fi
 echo -e "Java: $(java -version 2>&1 | head -n 1)"
 echo -e "Ruby: $(ruby --version)"
-echo -e "Bundler: $(bundle --version)"
 echo -e "CocoaPods: $(pod --version 2>/dev/null || echo 'Not installed')"
 echo -e "Flutter: $(flutter --version | head -n 1)"
 echo -e "Android SDK: $ANDROID_HOME"
