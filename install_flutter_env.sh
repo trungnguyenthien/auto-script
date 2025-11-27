@@ -15,6 +15,7 @@ CMDLINE_TOOLS_VERSION="11076708"
 ANDROID_HOME="$HOME/Library/Android/sdk"
 FLUTTER_HOME="$HOME/flutter"
 INSTALL_LOG="$HOME/.flutter_env_install.log"
+SHELL_RC="$HOME/.zshrc"
 
 # Function to log completed steps
 log_step() {
@@ -76,15 +77,6 @@ read
 
 # Request sudo password once at the beginning
 request_sudo
-
-# Detect shell
-if [ -n "$ZSH_VERSION" ]; then
-    SHELL_RC="$HOME/.zshrc"
-elif [ -n "$BASH_VERSION" ]; then
-    SHELL_RC="$HOME/.bash_profile"
-else
-    SHELL_RC="$HOME/.zshrc"
-fi
 
 # ========== Step 1: Install Homebrew ==========
 echo -e "\n${BLUE}[Step 1/7] Checking Homebrew...${NC}"
@@ -422,16 +414,6 @@ echo -e "CocoaPods: $(pod --version 2>/dev/null || echo 'Not installed')"
 echo -e "Flutter: $(flutter --version | head -n 1)"
 echo -e "Android SDK: $ANDROID_HOME"
 
-echo -e "\n${YELLOW}⚠️  IMPORTANT: Run the following command to apply changes:${NC}"
-echo -e "${BLUE}source $SHELL_RC${NC}"
-echo -e "\n${YELLOW}Or restart your terminal.${NC}"
-
-echo -e "\n${BLUE}After that, verify the installation:${NC}"
-echo -e "${BLUE}flutter doctor -v${NC}"
-
-echo -e "\n${BLUE}To reset installation and start fresh:${NC}"
-echo -e "${BLUE}rm $INSTALL_LOG${NC}"
-
 echo -e "\n${YELLOW}iOS Development Notes:${NC}"
 if [ ! -d "/Applications/Xcode.app" ]; then
     echo -e "${RED}⚠️  Xcode app is required for iOS development${NC}"
@@ -447,7 +429,26 @@ else
     echo -e "${YELLOW}   - Configure signing in Xcode for your project${NC}"
 fi
 
-echo -e "\n${GREEN}========================================${NC}"
+echo -e "\n${BLUE}========================================${NC}"
+echo -e "${YELLOW}Loading environment variables...${NC}"
+echo -e "${BLUE}========================================${NC}\n"
+
+# Source the shell configuration file
+source "$SHELL_RC"
+
+echo -e "${GREEN}✓ Environment variables loaded${NC}\n"
+
+# Run flutter doctor
+echo -e "${BLUE}========================================${NC}"
+echo -e "${YELLOW}Running Flutter Doctor...${NC}"
+echo -e "${BLUE}========================================${NC}\n"
+
+flutter doctor -v
+
+echo -e "\n${BLUE}========================================${NC}"
 echo -e "${GREEN}Environment setup complete! 🎉${NC}"
 echo -e "${GREEN}You can now build for both Android and iOS!${NC}"
-echo -e "${GREEN}========================================${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+echo -e "\n${YELLOW}To reset installation and start fresh:${NC}"
+echo -e "${BLUE}rm $INSTALL_LOG${NC}"
