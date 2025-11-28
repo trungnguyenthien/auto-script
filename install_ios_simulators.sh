@@ -15,9 +15,11 @@ NC='\033[0m' # No Color
 # Danh sách devices - sẽ được override bởi lựa chọn của user
 DEVICES=()
 
-# Biến lưu các iOS versions được chọn
+# Biến lưu các iOS versions và devices được chọn
 SELECTED_IOS_VERSIONS=()
 SELECTED_RUNTIME_IDS=()
+SELECTED_DEVICES=()
+SELECTED_DEVICE_IDENTIFIERS=()
 
 # Hàm in màu
 print_info() {
@@ -86,13 +88,12 @@ parse_runtime_line() {
     echo "$version|$runtime_id"
 }
 
-# Lấy tất cả device types có sẵn
+# Lấy tất cả device types có sẵn (iPhone và iPad)
 get_available_device_types() {
     local temp_file=$(mktemp)
     if timeout 10s xcrun simctl list devicetypes > "$temp_file" 2>&1; then
-        # Lấy tất cả iPhone device types
-        # Format: iPhone 14 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-14-Pro)
-        grep "iPhone" "$temp_file"
+        # Lấy tất cả iPhone và iPad device types
+        grep -E "iPhone|iPad" "$temp_file"
         rm -f "$temp_file"
         return 0
     else
@@ -101,29 +102,36 @@ get_available_device_types() {
     fi
 }
 
-# Parse device type line để lấy tên và identifier
+# Parse device type line để lấy tên display và identifier đầy đủ
 parse_device_type_line() {
     local line=$1
     # Format: iPhone SE (com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation)
     
-    # Lấy tên device (phần trước dấu ngoặc đơn, trim khoảng trắng)
+    # Lấy tên device gốc (phần trước dấu ngoặc đơn)
     local device_name=$(echo "$line" | sed -E 's/^[[:space:]]*//' | sed -E 's/[[:space:]]*\(.*//' | sed -E 's/[[:space:]]*$//')
     
-    # Lấy identifier để phân biệt các thế hệ
-    local identifier=$(echo "$line" | sed -E 's/.*\((com\.apple\.CoreSimulator\.SimDeviceType\.([^)]+))\).*/\2/')
+    # Lấy identifier đầy đủ (com.apple.CoreSimulator.SimDeviceType.xxx)
+    local full_identifier=$(echo "$line" | sed -E 's/.*\((com\.apple\.CoreSimulator\.SimDeviceType\.[^)]+)\).*/\1/')
+    
+    # Lấy phần cuối của identifier để phân biệt
+    local short_identifier=$(echo "$full_identifier" | sed -E 's/.*SimDeviceType\.//')
+    
+    # Tạo display name (tên hiển thị cho user)
+    local display_name="$device_name"
     
     # Xử lý các trường hợp đặc biệt cho iPhone SE
     if [[ "$device_name" == "iPhone SE" ]]; then
-        if [[ "$identifier" == *"3rd"* ]]; then
-            device_name="iPhone SE Gen3"
-        elif [[ "$identifier" == *"2nd"* ]]; then
-            device_name="iPhone SE Gen2"
-        elif [[ "$identifier" == *"1st"* ]] || [[ "$identifier" == "iPhone-SE" ]]; then
-            device_name="iPhone SE Gen1"
+        if [[ "$short_identifier" == *"3rd"* ]]; then
+            display_name="iPhone SE Gen3"
+        elif [[ "$short_identifier" == *"2nd"* ]]; then
+            display_name="iPhone SE Gen2"
+        elif [[ "$short_identifier" == *"1st"* ]] || [[ "$short_identifier" == "iPhone-SE" ]]; then
+            display_name="iPhone SE Gen1"
         fi
     fi
     
-    echo "$device_name"
+    # Return format: display_name|full_identifier
+    echo "$display_name|$full_identifier"
 }
 
 # Cho người dùng chọn device models
@@ -141,39 +149,62 @@ select_device_models() {
     fi
     
     # Tạo mảng để lưu các device names
-    local -a device_names=()
+    local -a device_display_names=()
+    local -a device_identifiers=()
     local index=1
     
     echo "Hãy chọn các device models cần tạo simulator (phân cách bởi khoảng trắng):"
-    echo "Gợi ý: Nhập 'all' để chọn tất cả"
+    echo "Gợi ý: Nhập 'all' để chọn tất cả, 'iphone' để chọn tất cả iPhone, 'ipad' để chọn tất cả iPad"
     echo ""
     
     # Parse từng dòng device type
     while IFS= read -r line; do
-        local device_name=$(parse_device_type_line "$line")
+        local parsed=$(parse_device_type_line "$line")
+        local display_name=$(echo "$parsed" | cut -d'|' -f1)
+        local full_identifier=$(echo "$parsed" | cut -d'|' -f2)
         
-        if [ ! -z "$device_name" ]; then
-            device_names+=("$device_name")
-            echo "$index - $device_name"
+        if [ ! -z "$display_name" ] && [ ! -z "$full_identifier" ]; then
+            device_display_names+=("$display_name")
+            device_identifiers+=("$full_identifier")
+            echo "$index - $display_name"
             index=$((index + 1))
         fi
     done <<< "$device_types"
     
     echo ""
-    read -p "Nhập các số tương ứng hoặc 'all' (ví dụ: 1 3 5 hoặc all): " selection
+    read -p "Nhập các số tương ứng hoặc 'all'/'iphone'/'ipad' (ví dụ: 1 3 5): " selection
     
     # Parse input
-    DEVICES=()
+    SELECTED_DEVICES=()
+    SELECTED_DEVICE_IDENTIFIERS=()
     
     if [ "$selection" = "all" ]; then
-        DEVICES=("${device_names[@]}")
-        print_info "✓ Đã chọn tất cả ${#DEVICES[@]} devices"
+        SELECTED_DEVICES=("${device_display_names[@]}")
+        SELECTED_DEVICE_IDENTIFIERS=("${device_identifiers[@]}")
+        print_info "✓ Đã chọn tất cả ${#SELECTED_DEVICES[@]} devices"
+    elif [ "$selection" = "iphone" ]; then
+        for i in "${!device_display_names[@]}"; do
+            if [[ "${device_display_names[$i]}" == iPhone* ]]; then
+                SELECTED_DEVICES+=("${device_display_names[$i]}")
+                SELECTED_DEVICE_IDENTIFIERS+=("${device_identifiers[$i]}")
+            fi
+        done
+        print_info "✓ Đã chọn tất cả ${#SELECTED_DEVICES[@]} iPhone"
+    elif [ "$selection" = "ipad" ]; then
+        for i in "${!device_display_names[@]}"; do
+            if [[ "${device_display_names[$i]}" == iPad* ]]; then
+                SELECTED_DEVICES+=("${device_display_names[$i]}")
+                SELECTED_DEVICE_IDENTIFIERS+=("${device_identifiers[$i]}")
+            fi
+        done
+        print_info "✓ Đã chọn tất cả ${#SELECTED_DEVICES[@]} iPad"
     else
         for num in $selection; do
-            if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -ge 1 ] && [ "$num" -le "${#device_names[@]}" ]; then
+            if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -ge 1 ] && [ "$num" -le "${#device_display_names[@]}" ]; then
                 local idx=$((num - 1))
-                DEVICES+=("${device_names[$idx]}")
-                print_info "✓ Đã chọn: ${device_names[$idx]}"
+                SELECTED_DEVICES+=("${device_display_names[$idx]}")
+                SELECTED_DEVICE_IDENTIFIERS+=("${device_identifiers[$idx]}")
+                print_info "✓ Đã chọn: ${device_display_names[$idx]}"
             else
                 print_warning "✗ Bỏ qua số không hợp lệ: $num"
             fi
@@ -182,12 +213,12 @@ select_device_models() {
     
     echo ""
     
-    if [ ${#DEVICES[@]} -eq 0 ]; then
+    if [ ${#SELECTED_DEVICES[@]} -eq 0 ]; then
         print_error "Không có device nào được chọn"
         exit 1
     fi
     
-    print_info "Tổng cộng ${#DEVICES[@]} device models được chọn"
+    print_info "Tổng cộng ${#SELECTED_DEVICES[@]} device models được chọn"
 }
 # Cho người dùng chọn iOS versions
 select_ios_versions() {
@@ -276,12 +307,13 @@ check_device_type() {
 
 # Tạo simulator device
 create_simulator() {
-    local device_name=$1
-    local ios_version=$2
-    local runtime_id=$3
+    local device_display_name=$1
+    local device_identifier=$2
+    local ios_version=$3
+    local runtime_id=$4
     
-    # Tên simulator
-    local sim_name="[iOS ${ios_version}] ${device_name}"
+    # Tên simulator (dùng display name cho tên)
+    local sim_name="[iOS ${ios_version}] ${device_display_name}"
     
     # Kiểm tra xem simulator đã tồn tại chưa
     print_info "  ⊙ Kiểm tra: $sim_name"
@@ -299,12 +331,12 @@ create_simulator() {
         return 1
     fi
     
-    # Tạo simulator với timeout
+    # Tạo simulator với timeout (dùng identifier đầy đủ)
     print_info "  + Đang tạo..."
     
     local create_output
     local temp_output=$(mktemp)
-    if timeout 30s xcrun simctl create "$sim_name" "$device_name" "$runtime_id" > "$temp_output" 2>&1; then
+    if timeout 30s xcrun simctl create "$sim_name" "$device_identifier" "$runtime_id" > "$temp_output" 2>&1; then
         create_output=$(cat "$temp_output")
         rm -f "$temp_output"
         print_info "  ✓ Thành công! UUID: ${create_output:0:36}"
@@ -327,7 +359,7 @@ create_simulator() {
 create_all_simulators() {
     print_section "TẠO SIMULATORS"
     
-    local total_devices=${#DEVICES[@]}
+    local total_devices=${#SELECTED_DEVICES[@]}
     local total_versions=${#SELECTED_IOS_VERSIONS[@]}
     local total_sims=$((total_devices * total_versions))
     local current=0
@@ -340,9 +372,13 @@ create_all_simulators() {
     
     print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    for device in "${DEVICES[@]}"; do
+    local device_idx=0
+    for device_display in "${SELECTED_DEVICES[@]}"; do
+        local device_identifier="${SELECTED_DEVICE_IDENTIFIERS[$device_idx]}"
+        device_idx=$((device_idx + 1))
+        
         echo ""
-        print_info "━━━ Device: $device ━━━"
+        print_info "━━━ Device: $device_display ━━━"
         
         local version_idx=0
         for version in "${SELECTED_IOS_VERSIONS[@]}"; do
@@ -361,7 +397,7 @@ create_all_simulators() {
             fi
             
             local create_result
-            create_simulator "$device" "$version" "$runtime_id"
+            create_simulator "$device_display" "$device_identifier" "$version" "$runtime_id"
             create_result=$?
             
             if [ $create_result -eq 0 ]; then
@@ -376,6 +412,9 @@ create_all_simulators() {
             # Chờ ngắn giữa các lần tạo
             sleep 0.3
         done
+        
+        # Reset version_idx cho device tiếp theo
+        version_idx=0
     done
     
     echo ""
@@ -400,18 +439,19 @@ show_summary() {
         echo ""
     done
     
-    local total_sims=$(xcrun simctl list devices | grep -c "iPhone.*iOS")
-    print_info "Tổng số simulators iPhone: $total_sims"
+    local total_sims=$(xcrun simctl list devices | grep -c -E "iPhone.*iOS|iPad.*iOS")
+    print_info "Tổng số simulators iPhone/iPad: $total_sims"
 }
 
-# Xóa simulators theo pattern
+# Xóa simulators theo pattern hoặc chọn cụ thể
 delete_all_simulators() {
     print_warning "Chọn cách xóa simulators:"
     echo "1) Xóa tất cả simulators có chứa '[iOS'"
     echo "2) Xóa simulators theo iOS version cụ thể"
-    echo "3) Hủy"
+    echo "3) Chọn simulators cụ thể để xóa (theo index)"
+    echo "4) Hủy"
     echo ""
-    read -p "Nhập lựa chọn (1-3): " delete_choice
+    read -p "Nhập lựa chọn (1-4): " delete_choice
     
     case $delete_choice in
         1)
@@ -466,6 +506,123 @@ delete_all_simulators() {
             print_info "Đã xóa $count simulators"
             ;;
         3)
+            # Lấy danh sách TẤT CẢ simulators (iPhone và iPad)
+            local temp_file=$(mktemp)
+            xcrun simctl list devices available | grep -E "iPhone|iPad" > "$temp_file"
+            
+            if [ ! -s "$temp_file" ]; then
+                rm -f "$temp_file"
+                print_warning "Không tìm thấy simulator nào"
+                return
+            fi
+            
+            # Tạo arrays để lưu thông tin
+            local -a sim_names=()
+            local -a sim_ids=()
+            local index=1
+            
+            echo ""
+            print_info "Danh sách tất cả simulators:"
+            echo ""
+            
+            while IFS= read -r line; do
+                # Bỏ qua các dòng header (-- iOS x.x --)
+                if [[ "$line" =~ ^--.*--$ ]]; then
+                    continue
+                fi
+                
+                local sim_name=$(echo "$line" | sed -E 's/^[[:space:]]*//' | sed -E 's/ \([^)]+\).*$//')
+                local sim_id=$(echo "$line" | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
+                
+                # Kiểm tra có phải là UUID hợp lệ không
+                if [[ "$sim_id" =~ ^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$ ]]; then
+                    sim_names+=("$sim_name")
+                    sim_ids+=("$sim_id")
+                    echo "$index - $sim_name"
+                    index=$((index + 1))
+                fi
+            done < "$temp_file"
+            
+            rm -f "$temp_file"
+            
+            if [ ${#sim_names[@]} -eq 0 ]; then
+                print_warning "Không tìm thấy simulator nào"
+                return
+            fi
+            
+            echo ""
+            echo "Gợi ý: Nhập 'all' để chọn tất cả, 'iphone' cho iPhone, 'ipad' cho iPad"
+            read -p "Nhập các số tương ứng với simulators cần xóa (phân cách bởi khoảng trắng): " selection
+            
+            if [ -z "$selection" ]; then
+                print_info "Hủy thao tác xóa"
+                return
+            fi
+            
+            # Parse selection
+            local -a to_delete_names=()
+            local -a to_delete_ids=()
+            
+            if [ "$selection" = "all" ]; then
+                to_delete_names=("${sim_names[@]}")
+                to_delete_ids=("${sim_ids[@]}")
+            elif [ "$selection" = "iphone" ]; then
+                for i in "${!sim_names[@]}"; do
+                    if [[ "${sim_names[$i]}" == *iPhone* ]]; then
+                        to_delete_names+=("${sim_names[$i]}")
+                        to_delete_ids+=("${sim_ids[$i]}")
+                    fi
+                done
+            elif [ "$selection" = "ipad" ]; then
+                for i in "${!sim_names[@]}"; do
+                    if [[ "${sim_names[$i]}" == *iPad* ]]; then
+                        to_delete_names+=("${sim_names[$i]}")
+                        to_delete_ids+=("${sim_ids[$i]}")
+                    fi
+                done
+            else
+                for num in $selection; do
+                    if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -ge 1 ] && [ "$num" -le "${#sim_names[@]}" ]; then
+                        local idx=$((num - 1))
+                        to_delete_names+=("${sim_names[$idx]}")
+                        to_delete_ids+=("${sim_ids[$idx]}")
+                    else
+                        print_warning "Bỏ qua số không hợp lệ: $num"
+                    fi
+                done
+            fi
+            
+            if [ ${#to_delete_ids[@]} -eq 0 ]; then
+                print_warning "Không có simulator nào được chọn"
+                return
+            fi
+            
+            echo ""
+            print_warning "Bạn có chắc muốn XÓA ${#to_delete_ids[@]} simulator(s)?"
+            echo "Sẽ xóa:"
+            for name in "${to_delete_names[@]}"; do
+                echo "  • $name"
+            done
+            echo ""
+            read -p "Nhập 'YES' để xác nhận: " confirm
+            
+            if [ "$confirm" != "YES" ]; then
+                print_info "Hủy thao tác xóa"
+                return
+            fi
+            
+            print_info "Đang xóa simulators..."
+            local count=0
+            
+            for i in "${!to_delete_ids[@]}"; do
+                xcrun simctl delete "${to_delete_ids[$i]}" 2>/dev/null
+                print_info "Đã xóa: ${to_delete_names[$i]}"
+                count=$((count + 1))
+            done
+            
+            print_info "Đã xóa $count simulators"
+            ;;
+        4)
             print_info "Hủy thao tác xóa"
             return
             ;;
@@ -499,10 +656,10 @@ show_menu() {
             echo ""
             print_section "XÁC NHẬN"
             echo ""
-            print_info "Sẽ tạo ${#DEVICES[@]} devices × ${#SELECTED_IOS_VERSIONS[@]} iOS versions = $((${#DEVICES[@]} * ${#SELECTED_IOS_VERSIONS[@]})) simulators"
+            print_info "Sẽ tạo ${#SELECTED_DEVICES[@]} devices × ${#SELECTED_IOS_VERSIONS[@]} iOS versions = $((${#SELECTED_DEVICES[@]} * ${#SELECTED_IOS_VERSIONS[@]})) simulators"
             echo ""
             echo "Devices đã chọn:"
-            for device in "${DEVICES[@]}"; do
+            for device in "${SELECTED_DEVICES[@]}"; do
                 echo "  • $device"
             done
             echo ""
