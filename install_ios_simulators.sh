@@ -297,7 +297,7 @@ check_device_type() {
     local temp_file=$(mktemp)
     
     if timeout 5s xcrun simctl list devicetypes > "$temp_file" 2>&1; then
-        if grep -q "$device_name" "$temp_file"; then
+        if grep -F -q "$device_name" "$temp_file"; then
             rm -f "$temp_file"
             return 0
         else
@@ -325,7 +325,7 @@ create_simulator() {
     print_info "  ⊙ Checking: $sim_name"
     local temp_file=$(mktemp)
     if timeout 10s xcrun simctl list devices > "$temp_file" 2>&1; then
-        if grep -q "$sim_name" "$temp_file"; then
+        if grep -F -q "$sim_name" "$temp_file"; then
             rm -f "$temp_file"
             print_warning "  → Already exists, skipping"
             return 2  # Return code 2 = skipped
