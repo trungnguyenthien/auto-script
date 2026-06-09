@@ -13,6 +13,19 @@ BLUE='\033[0;34m'
 BOLD_RED='\033[1;31m'
 NC='\033[0m' # No Color
 
+# Fallback timeout function for macOS/systems without GNU timeout
+timeout() {
+    if type -P timeout &> /dev/null; then
+        command timeout "$@"
+    elif type -P gtimeout &> /dev/null; then
+        gtimeout "$@"
+    else
+        local duration=$1
+        shift
+        "$@"
+    fi
+}
+
 # Device list - will be overridden by user selection
 DEVICES=()
 
@@ -403,8 +416,7 @@ create_all_simulators() {
             fi
             
             local create_result
-            create_simulator "$device_display" "$device_identifier" "$version" "$runtime_id"
-            create_result=$?
+            create_simulator "$device_display" "$device_identifier" "$version" "$runtime_id" && create_result=0 || create_result=$?
             
             if [ $create_result -eq 0 ]; then
                 success=$((success + 1))
