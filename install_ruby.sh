@@ -7,23 +7,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== Ruby Installation Script for macOS ===${NC}\n"
-
-# Check if Ruby is already installed
-if command -v ruby &> /dev/null; then
-    RUBY_VERSION=$(ruby --version)
-    echo -e "${GREEN}✓ Ruby is already installed: ${RUBY_VERSION}${NC}"
-    echo -e "${YELLOW}Do you want to install/upgrade to the latest version? (yes/no):${NC}"
-    read -r UPGRADE
-    
-    if [ "$UPGRADE" != "yes" ]; then
-        echo -e "${BLUE}Installation cancelled.${NC}"
-        exit 0
-    fi
-fi
+echo -e "${BLUE}=== Ruby Installation Script via rbenv for macOS ===${NC}\n"
 
 # Check if Homebrew is installed
-echo -e "\n${BLUE}Checking Homebrew...${NC}"
+echo -e "${BLUE}Checking Homebrew...${NC}"
 if ! command -v brew &> /dev/null; then
     echo -e "${YELLOW}Homebrew is not installed. Installing Homebrew...${NC}"
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -48,9 +35,9 @@ fi
 echo -e "\n${BLUE}Updating Homebrew...${NC}"
 brew update
 
-# Install Ruby
-echo -e "\n${BLUE}Installing Ruby...${NC}"
-brew install ruby
+# Install rbenv and ruby-build
+echo -e "\n${BLUE}Installing/Updating rbenv and ruby-build...${NC}"
+brew install rbenv ruby-build
 
 # Detect shell
 if [ -n "$ZSH_VERSION" ]; then
@@ -61,55 +48,94 @@ else
     SHELL_RC="$HOME/.zshrc"
 fi
 
-# Add Ruby to PATH
-echo -e "\n${BLUE}Configuring Ruby PATH...${NC}"
-
-# Check architecture and set appropriate path
-if [[ $(uname -m) == 'arm64' ]]; then
-    RUBY_PATH="/opt/homebrew/opt/ruby/bin"
-else
-    RUBY_PATH="/usr/local/opt/ruby/bin"
-fi
-
-# Check if PATH already contains Ruby
-if ! grep -q "$RUBY_PATH" "$SHELL_RC" 2>/dev/null; then
+# Configure rbenv in shell RC
+echo -e "\n${BLUE}Configuring rbenv shell integration in $SHELL_RC...${NC}"
+# Use a robust check to avoid duplicated lines
+if ! grep -q 'rbenv init' "$SHELL_RC" 2>/dev/null; then
     echo "" >> "$SHELL_RC"
-    echo "# Ruby configuration" >> "$SHELL_RC"
-    echo "export PATH=\"$RUBY_PATH:\$PATH\"" >> "$SHELL_RC"
-    echo -e "${GREEN}✓ Ruby PATH added to $SHELL_RC${NC}"
+    echo "# rbenv configuration" >> "$SHELL_RC"
+    echo 'eval "$(rbenv init -)"' >> "$SHELL_RC"
+    echo -e "${GREEN}✓ rbenv init script added to $SHELL_RC${NC}"
 else
-    echo -e "${YELLOW}Ruby PATH already exists in $SHELL_RC${NC}"
+    echo -e "${YELLOW}rbenv init script already exists in $SHELL_RC${NC}"
 fi
 
-# Source the shell configuration
-source "$SHELL_RC" 2>/dev/null || true
+# Initialize rbenv for current script execution context
+export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+eval "$(rbenv init -)"
+
+# Finding the latest stable Ruby version
+echo -e "\n${BLUE}Finding the latest stable Ruby version from rbenv...${NC}"
+LATEST_STABLE=$(rbenv install -l 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -n 1)
+
+if [ -z "$LATEST_STABLE" ]; then
+    # Fallback stable version if dynamic query fails
+    LATEST_STABLE="3.3.3"
+    echo -e "${YELLOW}Could not dynamically determine latest version, falling back to: $LATEST_STABLE${NC}"
+else
+    echo -e "${GREEN}✓ Latest stable Ruby version found: $LATEST_STABLE${NC}"
+fi
+
+echo -e "${YELLOW}Do you want to install version $LATEST_STABLE? (yes/no/custom):${NC}"
+read -r CHOICE
+
+if [[ "$CHOICE" == "custom" || "$CHOICE" == "c" ]]; then
+    echo -e "${YELLOW}Enter the version you want to install (e.g. 3.2.2):${NC}"
+    read -r SELECTED_VERSION
+elif [[ "$CHOICE" == "no" || "$CHOICE" == "n" ]]; then
+    echo -e "${BLUE}Installation cancelled.${NC}"
+    exit 0
+else
+    SELECTED_VERSION=$LATEST_STABLE
+fi
+
+# Check if selected version is already installed
+if rbenv versions --bare | grep -q "^${SELECTED_VERSION}$"; then
+    echo -e "${GREEN}✓ Ruby $SELECTED_VERSION is already installed via rbenv.${NC}"
+else
+    echo -e "\n${BLUE}Installing Ruby $SELECTED_VERSION... (This may take a few minutes as it compiles from source)${NC}"
+    rbenv install "$SELECTED_VERSION"
+fi
+
+# Set version as global
+echo -e "\n${BLUE}Setting Ruby $SELECTED_VERSION as global...${NC}"
+rbenv global "$SELECTED_VERSION"
+rbenv rehash
 
 # Verify installation
 echo -e "\n${BLUE}Verifying Ruby installation...${NC}"
-export PATH="$RUBY_PATH:$PATH"
+CURRENT_RUBY=$(ruby --version)
+CURRENT_RUBY_PATH=$(which ruby)
 
-if command -v ruby &> /dev/null; then
-    RUBY_VERSION=$(ruby --version)
-    RUBY_LOCATION=$(which ruby)
-    
-    echo -e "${GREEN}✓ Ruby installed successfully!${NC}"
-    echo -e "${GREEN}  Version: ${RUBY_VERSION}${NC}"
-    echo -e "${GREEN}  Location: ${RUBY_LOCATION}${NC}"
+if [[ "$CURRENT_RUBY_PATH" == *".rbenv/shims/ruby"* ]]; then
+    echo -e "${GREEN}✓ Ruby installed successfully via rbenv!${NC}"
+    echo -e "${GREEN}  Version: ${CURRENT_RUBY}${NC}"
+    echo -e "${GREEN}  Path: ${CURRENT_RUBY_PATH}${NC}"
 else
-    echo -e "${RED}✗ Ruby installation verification failed${NC}"
-    echo -e "${YELLOW}Please restart your terminal and try running: ruby --version${NC}"
-    exit 1
+    echo -e "${RED}✗ Warning: The current ruby path is ${CURRENT_RUBY_PATH}.${NC}"
+    echo -e "${YELLOW}It seems your terminal has not loaded the rbenv shims yet.${NC}"
+    echo -e "${YELLOW}We will try to explicitly run ruby from rbenv shims for verification...${NC}"
+    
+    SHIM_RUBY="$HOME/.rbenv/shims/ruby"
+    if [ -f "$SHIM_RUBY" ]; then
+        echo -e "${GREEN}✓ Ruby is present at: $SHIM_RUBY${NC}"
+        echo -e "${GREEN}  Version: $($SHIM_RUBY --version)${NC}"
+    else
+        echo -e "${RED}✗ Verification failed. Ruby is not found in rbenv shims.${NC}"
+        exit 1
+    fi
 fi
 
-# Install bundler (useful for Ruby projects)
+# Install Bundler
 echo -e "\n${BLUE}Installing Bundler...${NC}"
 gem install bundler --no-document
+rbenv rehash
 
 echo -e "\n${GREEN}========================================${NC}"
 echo -e "${GREEN}✓ Installation completed successfully!${NC}"
 echo -e "${GREEN}========================================${NC}"
-echo -e "\n${YELLOW}⚠️  IMPORTANT: Please run the following command to apply changes:${NC}"
+echo -e "\n${YELLOW}⚠️  IMPORTANT: Please run the following command to apply changes in your current session:${NC}"
 echo -e "${BLUE}source $SHELL_RC${NC}"
 echo -e "\n${YELLOW}Or simply restart your terminal.${NC}"
-echo -e "\n${BLUE}After that, verify Ruby is working:${NC}"
-echo -e "${BLUE}ruby --version${NC}"
+echo -e "\n${BLUE}After that, verify Ruby is managed by rbenv:${NC}"
+echo -e "${BLUE}which ruby${NC} (Should return: $HOME/.rbenv/shims/ruby)"

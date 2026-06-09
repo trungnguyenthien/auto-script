@@ -93,7 +93,12 @@ if [ ! -f commitlint.config.cjs ]; then
   echo "📄 Creating commitlint.config.cjs..."
   cat <<EOF > commitlint.config.cjs
 module.exports = {
-  extends: ['@commitlint/config-conventional']
+  extends: ['@commitlint/config-conventional'],
+  rules: {
+    'header-max-length': [2, 'always', 300],
+    'body-max-line-length': [2, 'always', 300],
+    'footer-max-line-length': [2, 'always', 300]
+  }
 };
 EOF
 else

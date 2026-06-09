@@ -1,17 +1,18 @@
 # install_ruby.sh
 
-Script tự động cài đặt và cấu hình môi trường **Ruby** phiên bản mới nhất trên hệ điều hành macOS sử dụng trình quản lý gói Homebrew.
+Script tự động cài đặt và cấu hình môi trường quản lý phiên bản **Ruby** trên hệ điều hành macOS sử dụng công cụ **rbenv**.
 
 ## Chức năng
-- **Kiểm tra trạng thái hiện tại:** Kiểm tra xem Ruby đã được cài đặt chưa. Nếu có sẵn, script sẽ hỏi người dùng có muốn nâng cấp lên phiên bản mới hay không.
-- **Tự động cài đặt Homebrew:** Nếu máy chưa có Homebrew, script sẽ tự động tải và cài đặt, đồng thời cấu hình biến môi trường phù hợp với kiến trúc máy (Apple Silicon `/opt/homebrew` hoặc Intel `/usr/local`).
-- **Cập nhật và Cài đặt Ruby:** Chạy `brew update` và cài đặt gói `ruby` bản mới nhất từ Homebrew.
-- **Cấu hình đường dẫn (PATH):**
-  - Tự động phát hiện Shell đang sử dụng để xác định tệp cấu hình phù hợp (`~/.zshrc` hoặc `~/.bash_profile`).
-  - Thêm đường dẫn cài đặt Ruby của Homebrew vào đầu biến `PATH` để hệ thống ưu tiên sử dụng bản Homebrew thay cho phiên bản Ruby cũ đi kèm mặc định của hệ điều hành macOS.
-  - Cấu hình các biến cờ biên dịch `LDFLAGS` và `CPPFLAGS` để hỗ trợ cài đặt các thư viện gem cần biên dịch mã nguồn C.
-- **Kiểm tra xác thực:** Kiểm tra đường dẫn chạy lệnh và phiên bản Ruby sau khi cài đặt.
-- **Cài đặt thư viện bổ trợ:** Tự động cài đặt công cụ quản lý dự án **Bundler** (`gem install bundler`).
+- **Tự động cài đặt Homebrew:** Nếu máy chưa có Homebrew, script sẽ tự động tải, cài đặt và cấu hình biến môi trường phù hợp với kiến trúc máy (Apple Silicon `/opt/homebrew` hoặc Intel `/usr/local`).
+- **Cài đặt rbenv & ruby-build:** Tự động cài đặt hoặc nâng cấp `rbenv` và plugin `ruby-build` qua Homebrew.
+- **Cấu hình rbenv cho Shell:**
+  - Tự động phát hiện Shell đang sử dụng (`~/.zshrc` hoặc `~/.bash_profile`).
+  - Thêm script khởi tạo `rbenv init` vào tệp cấu hình shell của bạn để tự động nạp các shims của rbenv.
+- **Tự động tìm kiếm phiên bản Ruby Stable mới nhất:**
+  - Script tự động truy vấn danh sách các phiên bản cài đặt từ rbenv để tìm ra phiên bản ổn định (stable) mới nhất.
+  - Cho phép người dùng tùy chọn: Cài đặt bản ổn định mới nhất, nhập phiên bản tùy chọn (Custom), hoặc Hủy.
+- **Kiểm tra và Tránh cài đặt trùng lặp:** Nếu phiên bản Ruby được chọn đã được cài đặt trong rbenv trước đó, script sẽ bỏ qua bước biên dịch để tiết kiệm thời gian.
+- **Cài đặt thư viện bổ trợ:** Tự động cài đặt công cụ quản lý thư viện **Bundler** (`gem install bundler`) cho phiên bản Ruby vừa thiết lập.
 
 ## Cách sử dụng
 
@@ -21,19 +22,34 @@ Script tự động cài đặt và cấu hình môi trường **Ruby** phiên b
    ./install_ruby.sh
    ```
 
-2. **Cung cấp phản hồi tương tác (nếu có):**
-   Nếu hệ thống đã có sẵn Ruby, nhập `yes` để thực hiện nâng cấp hoặc `no` để hủy bỏ.
+2. **Cung cấp phản hồi tương tác:**
+   Khi được hỏi, hãy chọn phương án cài đặt mong muốn:
+   *   Nhấn `Enter` hoặc nhập `yes` để cài phiên bản Stable mới nhất.
+   *   Nhập `custom` hoặc `c` để cài đặt một phiên bản cụ thể khác (ví dụ: `3.2.2`).
+   *   Nhập `no` hoặc `n` để hủy bỏ cài đặt.
 
-3. **Áp dụng các thay đổi đường dẫn:**
-   Sau khi script thông báo hoàn thành thành công, bạn chạy lệnh sau để cập nhật cấu hình cho Terminal hiện tại:
+3. **Áp dụng thay đổi cho phiên chạy hiện tại:**
+   Sau khi script chạy xong, hãy tải lại cấu hình shell để rbenv bắt đầu hoạt động ngay lập tức:
    ```bash
    source ~/.zshrc      # Nếu bạn dùng Zsh
    # hoặc
    source ~/.bash_profile  # Nếu bạn dùng Bash
    ```
-   Hoặc bạn chỉ cần khởi động lại Terminal.
+   *Hoặc đơn giản là khởi động lại ứng dụng Terminal của bạn.*
+
+## Cách kiểm tra hoạt động
+
+Sau khi chạy lệnh `source` hoặc mở lại Terminal mới, bạn có thể kiểm tra xem hệ thống đã sử dụng đúng Ruby của rbenv chưa:
+
+```bash
+which ruby
+# Nên trả về: /Users/<tên_user>/.rbenv/shims/ruby
+
+ruby --version
+# Nên hiển thị đúng phiên bản bạn vừa chọn cài đặt
+```
 
 ## Cấu hình và Yêu cầu hệ thống
 - **Hệ điều hành:** macOS.
-- **Yêu cầu:** Máy cần có kết nối Internet để tải các gói từ Homebrew và Rubygems.
-- **Quyền hạn:** Cần có quyền ghi vào các tệp cấu hình cá nhân trong thư mục người dùng (`$HOME`).
+- **Yêu cầu:** Máy cần có kết nối Internet để tải/biên dịch mã nguồn Ruby từ các server chính thức của Ruby và Rubygems.
+- **Quyền hạn:** Ghi tệp cấu hình cá nhân trong thư mục người dùng (`$HOME`). Không cần quyền `sudo` để cài đặt phiên bản Ruby hoặc gem vì chúng được lưu trữ trực tiếp trong thư mục cá nhân của bạn (`~/.rbenv/`).

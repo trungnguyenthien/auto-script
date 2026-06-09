@@ -8,7 +8,7 @@ Script tự động cài đặt và cấu hình bộ đôi **Commitlint** và **
   - Cài đặt `@commitlint/cli@19.8.1` và `@commitlint/config-conventional@19.8.1`.
   - Cài đặt `husky@9.1.7`.
 - **Khởi tạo cấu hình dự án:**
-  - Tạo tệp `commitlint.config.cjs` kế thừa cấu hình chuẩn `conventional`.
+  - Tạo tệp `commitlint.config.cjs` kế thừa cấu hình chuẩn `conventional` và thiết lập giới hạn chiều dài tin nhắn (header, body, footer) lên tối đa 300 ký tự.
   - Tự động phát hiện và tạo tệp `package.json` cơ bản nếu chưa tồn tại (tiện lợi cho các dự án Native iOS/Android hoặc Flutter).
   - Tự động chèn thêm script `"prepare": "husky"` vào `package.json` nếu chưa có.
 - **Thiết lập Git Hooks (Husky):**
