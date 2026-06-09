@@ -38,20 +38,12 @@ curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/h
 
 ### 2. Quản lý Giả lập iOS (iOS Simulator Management)
 
-#### 📱 [Tạo Giả lập iOS Hàng loạt](install_ios_simulators.md) (`install_ios_simulators.sh`)
+#### 📱 [Tạo & Quản lý Giả lập iOS Hàng loạt](install_ios_simulators.md) (`install_ios_simulators.sh`)
 
-Giao diện dòng lệnh tương tác hỗ trợ quét môi trường hệ thống và tự động tạo hàng loạt các thiết bị giả lập iOS theo các phiên bản hệ điều hành đã tải.
+Giao diện dòng lệnh tương tác hỗ trợ quét môi trường hệ thống, tự động tạo hàng loạt các thiết bị giả lập iOS, đồng thời cung cấp menu quản lý vận hành (bật/tắt/factory reset) nhanh chóng.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_ios_simulators.sh -o install_ios_simulators.sh && chmod +x install_ios_simulators.sh && ./install_ios_simulators.sh && rm install_ios_simulators.sh
-```
-
-#### ⚙️ [Quản lý Vận hành Giả lập iOS](ios_sim_manager.md) (`ios_sim_manager.sh`)
-
-Giao diện dòng lệnh tương tác giúp bật (boot), tắt (shutdown) hoặc xóa sạch dữ liệu (wipe/factory reset) các thiết bị giả lập iOS một cách nhanh chóng.
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/ios_sim_manager.sh -o ios_sim_manager.sh && chmod +x ios_sim_manager.sh && ./ios_sim_manager.sh && rm ios_sim_manager.sh
 ```
 
 ---

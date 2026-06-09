@@ -10,8 +10,14 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 BOLD_RED='\033[1;31m'
 NC='\033[0m' # No Color
+
+# Global arrays for simulator manager operations
+DEVICE_NAMES=()
+DEVICE_UUIDS=()
+DEVICE_STATUS=()
 
 # Fallback timeout function for macOS/systems without GNU timeout
 timeout() {
@@ -650,80 +656,260 @@ delete_all_simulators() {
     esac
 }
 
+# --- Simulator Manager Operational Functions ---
+
+scan_simulators() {
+    # Reset arrays
+    DEVICE_NAMES=()
+    DEVICE_UUIDS=()
+    DEVICE_STATUS=()
+    
+    local temp_file=$(mktemp)
+    
+    # Get available devices, filter for iPhone/iPad
+    xcrun simctl list devices available | grep -E "iPhone|iPad" > "$temp_file"
+    
+    if [ ! -s "$temp_file" ]; then
+        rm -f "$temp_file"
+        return 1
+    fi
+
+    # Parse file
+    while IFS= read -r line; do
+        # Ignore header lines
+        if [[ "$line" =~ ^--.*--$ ]]; then continue; fi
+
+        # Extract Name (remove leading spaces, remove UUID part)
+        local name=$(echo "$line" | sed -E 's/^[[:space:]]*//' | sed -E 's/ \([0-9A-F-]+\).*$//')
+        
+        # Extract UUID
+        local uuid=$(echo "$line" | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
+        
+        # Extract Status (Booted or Shutdown)
+        local status="Shutdown"
+        if [[ "$line" == *"(Booted)"* ]]; then
+            status="Booted"
+        fi
+
+        if [[ "$uuid" =~ ^[0-9A-F]{8}- ]]; then
+            DEVICE_NAMES+=("$name")
+            DEVICE_UUIDS+=("$uuid")
+            DEVICE_STATUS+=("$status")
+        fi
+    done < "$temp_file"
+    rm -f "$temp_file"
+    return 0
+}
+
+select_simulator() {
+    scan_simulators
+    if [ $? -ne 0 ]; then
+        print_error "No simulators found!"
+        return 1
+    fi
+
+    echo "Available Simulators:"
+    local i=0
+    for name in "${DEVICE_NAMES[@]}"; do
+        local status_icon="🔴"
+        local status_text="Shutdown"
+        
+        if [ "${DEVICE_STATUS[$i]}" == "Booted" ]; then
+            status_icon="🟢"
+            status_text="Booted"
+        fi
+        
+        echo -e "  $((i+1))) [${status_icon}] ${name}"
+        i=$((i+1))
+    done
+
+    echo ""
+    read -p "Select device number (or 'q' to cancel): " selection
+
+    if [[ "$selection" == "q" ]]; then
+        return 1
+    fi
+
+    if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#DEVICE_NAMES[@]}" ]; then
+        SELECTED_INDEX=$((selection - 1))
+        return 0
+    else
+        print_error "Invalid selection."
+        return 1
+    fi
+}
+
+action_start_simulator() {
+    print_section "START SIMULATOR"
+    
+    if select_simulator; then
+        local uuid="${DEVICE_UUIDS[$SELECTED_INDEX]}"
+        local name="${DEVICE_NAMES[$SELECTED_INDEX]}"
+        local status="${DEVICE_STATUS[$SELECTED_INDEX]}"
+
+        echo ""
+        if [ "$status" == "Booted" ]; then
+            print_warning "$name is already booted."
+            print_info "Opening Simulator window..."
+            open -a Simulator
+        else
+            print_info "Booting: $name..."
+            xcrun simctl boot "$uuid"
+            
+            print_info "Opening interface..."
+            open -a Simulator
+            print_info "✓ Done"
+        fi
+    fi
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+action_wipe_simulator() {
+    print_section "WIPE SIMULATOR DATA"
+    print_warning "⚠️  This will factory reset the device and delete all installed apps/data."
+    
+    if select_simulator; then
+        local uuid="${DEVICE_UUIDS[$SELECTED_INDEX]}"
+        local name="${DEVICE_NAMES[$SELECTED_INDEX]}"
+        local status="${DEVICE_STATUS[$SELECTED_INDEX]}"
+
+        echo ""
+        echo -e "Target: ${CYAN}$name${NC}"
+        read -p "Are you sure you want to WIPE this device? (type 'yes'): " confirm
+
+        if [ "$confirm" == "yes" ]; then
+            if [ "$status" == "Booted" ]; then
+                print_info "Device is running. Shutting down first..."
+                xcrun simctl shutdown "$uuid"
+                sleep 2
+            fi
+
+            print_info "Erasing data..."
+            if xcrun simctl erase "$uuid"; then
+                print_info "✓ Device wiped successfully."
+            else
+                print_error "Failed to wipe device."
+            fi
+        else
+            print_info "Cancelled."
+        fi
+    fi
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+action_shutdown_all() {
+    print_section "SHUTDOWN ALL SIMULATORS"
+    print_info "Stopping all running devices..."
+    xcrun simctl shutdown all
+    print_info "✓ All devices shutdown."
+    sleep 1
+}
+
 # Main menu
 show_menu() {
-    clear
-    print_section "iOS SIMULATOR BATCH CREATOR"
-    echo ""
-    echo "Options:"
-    echo "1) Select devices and iOS versions to create simulators"
-    echo "2) View current simulators list"
-    echo "3) View installed iOS runtimes"
-    echo "4) View available device types"
-    echo "5) DELETE simulators by pattern"
-    echo "6) Exit"
-    echo ""
-    read -p "Enter choice (1-6): " choice
-    
-    case $choice in
-        1)
-            echo ""
-            select_device_models
-            echo ""
-            select_ios_versions
-            echo ""
-            print_section "CONFIRMATION"
-            echo ""
-            print_info "Will create ${#SELECTED_DEVICES[@]} devices × ${#SELECTED_IOS_VERSIONS[@]} iOS versions = $((${#SELECTED_DEVICES[@]} * ${#SELECTED_IOS_VERSIONS[@]})) simulators"
-            echo ""
-            echo "Selected devices:"
-            for device in "${SELECTED_DEVICES[@]}"; do
-                echo "  • $device"
-            done
-            echo ""
-            echo "Selected iOS versions:"
-            for version in "${SELECTED_IOS_VERSIONS[@]}"; do
-                echo "  • iOS $version"
-            done
-            echo ""
-            read -p "Continue to create simulators? (y/n): " confirm
-            if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+    while true; do
+        clear
+        print_section "iOS SIMULATOR BATCH CREATOR & MANAGER"
+        echo ""
+        echo "Options:"
+        echo "1) Create simulators (Select device models and iOS versions)"
+        echo "2) Start a simulator (Boot & Open)"
+        echo "3) Wipe simulator data (Factory Reset)"
+        echo "4) Shutdown ALL simulators"
+        echo "5) View current simulators list"
+        echo "6) View installed iOS runtimes"
+        echo "7) View available device types"
+        echo "8) DELETE simulators by pattern"
+        echo "9) Exit"
+        echo ""
+        read -p "Enter choice (1-9): " choice
+        
+        case $choice in
+            1)
                 echo ""
-                create_all_simulators
+                select_device_models
                 echo ""
-                show_summary
-            else
-                print_info "Cancelled"
-            fi
-            ;;
-        2)
-            echo ""
-            print_info "Current simulators list:"
-            xcrun simctl list devices available
-            ;;
-        3)
-            echo ""
-            print_info "Installed iOS runtimes:"
-            xcrun simctl list runtimes | grep iOS
-            ;;
-        4)
-            echo ""
-            print_info "Available device types:"
-            get_available_device_types
-            ;;
-        5)
-            echo ""
-            delete_all_simulators
-            ;;
-        6)
-            print_info "Exiting program"
-            exit 0
-            ;;
-        *)
-            print_error "Invalid choice"
-            exit 1
-            ;;
-    esac
+                select_ios_versions
+                echo ""
+                print_section "CONFIRMATION"
+                echo ""
+                print_info "Will create ${#SELECTED_DEVICES[@]} devices × ${#SELECTED_IOS_VERSIONS[@]} iOS versions = $((${#SELECTED_DEVICES[@]} * ${#SELECTED_IOS_VERSIONS[@]})) simulators"
+                echo ""
+                echo "Selected devices:"
+                for device in "${SELECTED_DEVICES[@]}"; do
+                    echo "  • $device"
+                done
+                echo ""
+                echo "Selected iOS versions:"
+                for version in "${SELECTED_IOS_VERSIONS[@]}"; do
+                    echo "  • iOS $version"
+                done
+                echo ""
+                read -p "Continue to create simulators? (y/n): " confirm
+                if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+                    echo ""
+                    create_all_simulators
+                    echo ""
+                    show_summary
+                else
+                    print_info "Cancelled"
+                fi
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            2)
+                echo ""
+                action_start_simulator
+                ;;
+            3)
+                echo ""
+                action_wipe_simulator
+                ;;
+            4)
+                echo ""
+                action_shutdown_all
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            5)
+                echo ""
+                print_info "Current simulators list:"
+                xcrun simctl list devices available
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            6)
+                echo ""
+                print_info "Installed iOS runtimes:"
+                xcrun simctl list runtimes | grep iOS
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            7)
+                echo ""
+                print_info "Available device types:"
+                get_available_device_types
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            8)
+                echo ""
+                delete_all_simulators
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            9)
+                print_info "Exiting program"
+                exit 0
+                ;;
+            *)
+                print_error "Invalid choice"
+                sleep 1
+                ;;
+        esac
+    done
 }
 
 # Main
