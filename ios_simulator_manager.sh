@@ -11,6 +11,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+BOLD_BLUE='\033[1;34m'
+BOLD_CYAN='\033[1;36m'
 BOLD_RED='\033[1;31m'
 NC='\033[0m' # No Color
 
@@ -59,9 +61,14 @@ print_critical() {
 }
 
 print_section() {
-    echo -e "${BLUE}========================================${NC}"
-    echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}========================================${NC}"
+    local title=" $1 "
+    local len=${#title}
+    local border=""
+    printf -v border '%*s' $((len+4)) ''
+    border=${border// /═}
+    echo -e "${BOLD_BLUE}╔${border}╗${NC}"
+    echo -e "${BOLD_BLUE}║  ${BOLD_CYAN}${title}${BOLD_BLUE}  ║${NC}"
+    echo -e "${BOLD_BLUE}╚${border}╝${NC}"
 }
 
 # Check macOS ARM
@@ -807,10 +814,44 @@ action_shutdown_all() {
     sleep 1
 }
 
+action_show_guidelines() {
+    clear 2>/dev/null || true
+    print_section "HƯỚNG DẪN CÀI ĐẶT CÔNG CỤ & TẢI RUNTIME iOS"
+    
+    echo -e "${YELLOW}1. Cách cài đặt Xcode Command Line Tools:${NC}"
+    echo -e "   - Xcode Command Line Tools cung cấp các lệnh cần thiết để phát triển ứng dụng."
+    echo -e "   - Chạy lệnh sau trong Terminal để cài đặt:"
+    echo -e "     ${GREEN}xcode-select --install${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}2. Cách kiểm tra và chuyển đổi phiên bản Xcode:${NC}"
+    echo -e "   - Kiểm tra đường dẫn thư mục Xcode hiện tại đang dùng:"
+    echo -e "     ${GREEN}xcode-select -p${NC}"
+    echo -e "   - Nếu bạn có nhiều bản Xcode (như bản Beta), chuyển sang bản Xcode chính thức:"
+    echo -e "     ${GREEN}sudo xcode-select -s /Applications/Xcode.app/Contents/Developer${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}3. Cách tải thêm phiên bản iOS mới (iOS Runtime):${NC}"
+    echo -e "   ${CYAN}👉 Cách 1: Chạy qua dòng lệnh (CLI - Nhanh & trực tiếp)${NC}"
+    echo -e "   - Xem danh sách các platform có thể tải về:"
+    echo -e "     ${GREEN}xcodebuild -downloadAllPlatforms -showSDKs${NC}"
+    echo -e "   - Chạy lệnh sau để tải phiên bản iOS Simulator Runtime mới nhất:"
+    echo -e "     ${GREEN}xcodebuild -downloadPlatform iOS${NC}"
+    echo ""
+    echo -e "   ${CYAN}👉 Cách 2: Thực hiện qua giao diện Xcode (GUI)${NC}"
+    echo -e "   - Mở Xcode, chọn ${BLUE}Xcode > Settings... (hoặc Cmd + ,)${NC} trên thanh menu."
+    echo -e "   - Chuyển sang tab ${BLUE}Platforms${NC}."
+    echo -e "   - Nhấp vào nút ${GREEN}+${NC} ở góc dưới bên trái, chọn ${BLUE}iOS${NC}."
+    echo -e "   - Lựa chọn phiên bản iOS mong muốn và nhấn tải xuống."
+    echo ""
+    
+    read -p "Press Enter to return to main menu..."
+}
+
 # Main menu
 show_menu() {
     while true; do
-        clear
+        clear 2>/dev/null || true
         print_section "iOS SIMULATOR BATCH CREATOR & MANAGER"
         echo ""
         echo "Options:"
@@ -822,9 +863,10 @@ show_menu() {
         echo "6) View installed iOS runtimes"
         echo "7) View available device types"
         echo "8) DELETE simulators by pattern"
-        echo "9) Exit"
+        echo "9) Guide: Install tools & download iOS runtimes"
+        echo "10) Exit"
         echo ""
-        read -p "Enter choice (1-9): " choice
+        read -p "Enter choice (1-10): " choice
         
         case $choice in
             1)
@@ -901,6 +943,10 @@ show_menu() {
                 read -p "Press Enter to continue..."
                 ;;
             9)
+                echo ""
+                action_show_guidelines
+                ;;
+            10)
                 print_info "Exiting program"
                 exit 0
                 ;;
