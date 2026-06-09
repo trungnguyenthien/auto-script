@@ -58,12 +58,12 @@ Tự động cài đặt, cấu hình proxy và khởi chạy dịch vụ chạy
 curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_headroom.sh -o install_headroom.sh && chmod +x install_headroom.sh && ./install_headroom.sh && rm install_headroom.sh
 ```
 
-#### 🛡️ [Cài đặt RTK (Rust Token Killer)](install_rtk.md) (`install_rtk.sh`)
+#### 🛡️ [Tối ưu hóa Token & Cài đặt RTK](install_optimize_token.md) (`install_optimize_token.sh`)
 
-Cài đặt và thiết lập alias trong shell cho công cụ RTK, giúp AI Agent tự động tối ưu hóa logs và mã nguồn khi chạy git, npm, pytest,...
+Cài đặt và thiết lập alias trong shell cho công cụ RTK cùng với các công cụ tối ưu hóa token đầu vào, giúp AI Agent tự động tối ưu hóa logs và mã nguồn khi chạy git, npm, pytest,...
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_rtk.sh -o install_rtk.sh && chmod +x install_rtk.sh && ./install_rtk.sh && rm install_rtk.sh
+curl -fsSL https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_optimize_token.sh -o install_optimize_token.sh && chmod +x install_optimize_token.sh && ./install_optimize_token.sh && rm install_optimize_token.sh
 ```
 
 ---

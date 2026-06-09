@@ -31,7 +31,7 @@ read -p "Bạn có muốn tiến hành cài đặt RTK tự động không? (y/n
 
 case "$choice" in 
   y|Y ) 
-    echo -e "\n${BLUE}[1/3] Bắt đầu quá trình cài đặt...${NC}"
+    echo -e "\n${BLUE}[1/4] Bắt đầu quá trình cài đặt RTK...${NC}"
     ;;
   * )
     echo -e "\n${RED}Đã hủy bỏ cài đặt. Hẹn gặp lại bạn lần sau!${NC}\n"
@@ -47,7 +47,30 @@ else
     exit 1
 fi
 
-echo -e "\n${BLUE}[2/3] Đang kiểm tra cấu hình Shell để thiết lập Alias tự động...${NC}"
+# 3.5. Cài đặt công cụ tối ưu hóa token (context-optimization)
+echo -e "\n${BLUE}[2/4] Kiểm tra và cài đặt công cụ tối ưu hóa token (context-optimization)...${NC}"
+
+if ! command -v npx &> /dev/null; then
+    echo -e "${YELLOW}npx không được tìm thấy. Đang tiến hành cài đặt Node.js qua Homebrew...${NC}"
+    if command -v brew &> /dev/null; then
+        brew install node
+    else
+        echo -e "${RED}✗ Không tìm thấy Homebrew. Vui lòng cài đặt Homebrew hoặc Node.js để tiếp tục cài đặt skill.${NC}"
+    fi
+fi
+
+if command -v npx &> /dev/null; then
+    echo -e "${YELLOW}Đang cài đặt skill context-optimization...${NC}"
+    if npx skills add https://github.com/sickn33/antigravity-awesome-skills --skill context-optimization; then
+        echo -e "${GREEN}✓ Cài đặt context-optimization thành công!${NC}"
+    else
+        echo -e "${RED}✗ Cài đặt context-optimization thất bại.${NC}"
+    fi
+else
+    echo -e "${RED}✗ Bỏ qua cài đặt context-optimization vì thiếu npx.${NC}"
+fi
+
+echo -e "\n${BLUE}[3/4] Đang kiểm tra cấu hình Shell để thiết lập Alias tự động...${NC}"
 
 # 4. Xác định file cấu hình Shell của người dùng
 SHELL_RC=""
@@ -80,9 +103,9 @@ else
 fi
 
 # 6. Hoàn tất
-echo -e "\n${BLUE}[3/3] Hoàn tất cài đặt!${NC}"
+echo -e "\n${BLUE}[4/4] Hoàn tất cài đặt!${NC}"
 echo -e "${GREEN}================================================================${NC}"
-echo -e "${GREEN}Chúc mừng! RTK đã sẵn sàng hoạt động.${NC}"
+echo -e "${GREEN}Chúc mừng! RTK và các công cụ tối ưu hóa đã sẵn sàng hoạt động.${NC}"
 echo -e "Để áp dụng các thay đổi ngay lập tức cho Terminal hiện tại, hãy chạy lệnh:"
 echo -e "${YELLOW}source $SHELL_RC${NC}"
 echo -e "Hoặc đơn giản là tắt Terminal này đi và mở một cửa sổ mới."
