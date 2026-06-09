@@ -57,6 +57,14 @@ bash install_headroom.sh --install
 bash install_headroom.sh --help
 ```
 
+### Gỡ bỏ (Uninstall) hoàn toàn
+
+Để dừng các service đang chạy ngầm (hoặc Docker container) và xóa sạch các tệp tin cấu hình của Headroom khỏi hệ thống, hãy chạy script với cờ `--uninstall` (hoặc `-u`):
+
+```bash
+bash install_headroom.sh --uninstall
+```
+
 ### Bước 3 — Trả lời các câu hỏi
 
 Script hỏi lần lượt 4 thông tin:

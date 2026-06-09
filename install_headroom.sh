@@ -126,6 +126,81 @@ restart_headroom() {
     exit 0
 }
 
+uninstall_headroom() {
+    info "Bắt đầu gỡ bỏ Headroom proxy..."
+    OS_TYPE="$(uname -s)"
+    
+    # 1. Stop and remove LaunchAgent (macOS)
+    if [[ "$OS_TYPE" == "Darwin" ]]; then
+        PLIST_FILE="$HOME/Library/LaunchAgents/ai.headroom.proxy.plist"
+        if [[ -f "$PLIST_FILE" ]]; then
+            info "Đang gỡ bỏ LaunchAgent (macOS)..."
+            launchctl unload "$PLIST_FILE" 2>/dev/null || true
+            rm -f "$PLIST_FILE"
+            success "Đã gỡ bỏ tệp LaunchAgent: $PLIST_FILE"
+        fi
+    fi
+    
+    # 2. Stop and remove systemd service (Linux)
+    if [[ "$OS_TYPE" == "Linux" ]]; then
+        SERVICE_FILE="$HOME/.config/systemd/user/headroom-proxy.service"
+        if [[ -f "$SERVICE_FILE" ]] || systemctl --user list-unit-files | grep -q "headroom-proxy.service"; then
+            info "Đang gỡ bỏ systemd service (Linux)..."
+            systemctl --user stop headroom-proxy.service 2>/dev/null || true
+            systemctl --user disable headroom-proxy.service 2>/dev/null || true
+            rm -f "$SERVICE_FILE"
+            systemctl --user daemon-reload 2>/dev/null || true
+            success "Đã gỡ bỏ tệp systemd service"
+        fi
+    fi
+    
+    # 3. Stop and remove Docker container if exists
+    if command -v docker &>/dev/null; then
+        if docker ps -a --format '{{.Names}}' | grep -Eq "^headroom-proxy$"; then
+            info "Phát hiện Docker container headroom-proxy, đang dừng và gỡ bỏ..."
+            docker stop headroom-proxy &>/dev/null || true
+            docker rm headroom-proxy &>/dev/null || true
+            success "Đã dừng và xóa Docker container headroom-proxy."
+        fi
+    fi
+    
+    # 4. Read port from config .env to kill running process
+    local config_port=8787
+    local env_file="$HOME/.config/headroom/.env"
+    if [[ -f "$env_file" ]]; then
+        local env_port=$(grep -E "^HEADROOM_PORT=" "$env_file" | cut -d'=' -f2 || true)
+        if [[ -n "$env_port" ]]; then
+            config_port="$env_port"
+        fi
+    fi
+    
+    # Kill process holding the port
+    local pids=$(lsof -ti :"$config_port" 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+        info "Đang tắt các tiến trình đang chiếm dụng port $config_port..."
+        echo "$pids" | xargs kill -9 2>/dev/null || true
+    fi
+    pkill -9 -f "headroom proxy" 2>/dev/null || true
+    
+    # 5. Remove config and scripts
+    info "Đang dọn dẹp các tệp cấu hình và mã nguồn..."
+    rm -rf "$HOME/.config/headroom"
+    rm -f "$HOME/.local/bin/headroom-start"
+    rm -rf "$HOME/.cache/headroom"
+    success "Đã dọn dẹp thư mục cấu hình và tệp chạy."
+    
+    # 6. Uninstall python package
+    info "Đang gỡ bỏ gói cài đặt headroom-ai..."
+    if command -v pipx &>/dev/null; then
+        pipx uninstall headroom-ai &>/dev/null || true
+    fi
+    if command -v python3 &>/dev/null; then
+        python3 -m pip uninstall -y headroom-ai &>/dev/null || true
+    fi
+    success "Gỡ bỏ hoàn tất! 🎉"
+    exit 0
+}
+
 show_help() {
     show_help_content
     exit 0
@@ -150,13 +225,15 @@ show_welcome_message() {
     show_banner
     header "Hướng dẫn sử dụng"
     echo -e "Vui lòng chạy script với một trong các flag sau:"
-    echo -e "  ${CYAN}--install${RESET}, ${CYAN}-i${RESET}  : Thực hiện cài đặt mới và cấu hình Headroom proxy."
-    echo -e "  ${CYAN}--restart${RESET}, ${CYAN}-r${RESET}  : Khởi động lại daemon/container Headroom đang hoạt động."
-    echo -e "  ${CYAN}--help${RESET}, ${CYAN}-h${RESET}     : Xem hướng dẫn cấu hình chi tiết cho các AI Agent (Claude Code, Zoo Code, Continue.dev)."
+    echo -e "  ${CYAN}--install${RESET}, ${CYAN}-i${RESET}    : Thực hiện cài đặt mới và cấu hình Headroom proxy."
+    echo -e "  ${CYAN}--restart${RESET}, ${CYAN}-r${RESET}    : Khởi động lại daemon/container Headroom đang hoạt động."
+    echo -e "  ${CYAN}--uninstall${RESET}, ${CYAN}-u${RESET}  : Gỡ bỏ hoàn toàn Headroom proxy và các tệp cấu hình."
+    echo -e "  ${CYAN}--help${RESET}, ${CYAN}-h${RESET}       : Xem hướng dẫn cấu hình chi tiết cho các AI Agent (Claude Code, Zoo Code, Continue.dev)."
     echo ""
     echo -e "Ví dụ:"
     echo -e "  ${GREEN}bash install_headroom.sh --install${RESET}"
     echo -e "  ${GREEN}bash install_headroom.sh --restart${RESET}"
+    echo -e "  ${GREEN}bash install_headroom.sh --uninstall${RESET}"
     echo -e "  ${GREEN}bash install_headroom.sh --help${RESET}"
     echo ""
 }
@@ -174,6 +251,9 @@ case "${1}" in
         ;;
     --restart|-r)
         restart_headroom
+        ;;
+    --uninstall|-u)
+        uninstall_headroom
         ;;
     --install|-i)
         show_banner
