@@ -10,12 +10,24 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Configuration
-FLUTTER_VERSION="3.38.2"
+FLUTTER_VERSION="3.44.0"
 CMDLINE_TOOLS_VERSION="11076708"
+RUBY_VERSION="3.2.2"
 ANDROID_HOME="$HOME/Library/Android/sdk"
-FLUTTER_HOME="$HOME/flutter"
 INSTALL_LOG="$HOME/.flutter_env_install.log"
 SHELL_RC="$HOME/.zshrc"
+
+# Detect existing Flutter installation or fallback to default
+if command -v flutter &>/dev/null; then
+    FLUTTER_BIN_PATH=$(which flutter)
+    while [ -h "$FLUTTER_BIN_PATH" ]; do
+        FLUTTER_BIN_PATH=$(readlink "$FLUTTER_BIN_PATH")
+    done
+    FLUTTER_HOME=$(cd "$(dirname "$FLUTTER_BIN_PATH")/.." && pwd)
+else
+    FLUTTER_HOME="$HOME/flutter"
+fi
+
 
 # Function to log completed steps
 log_step() {
@@ -34,6 +46,163 @@ is_step_completed() {
 # Function to skip step message
 skip_step() {
     echo -e "${GREEN}✓ $1 (already completed, skipping)${NC}"
+}
+
+print_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_critical() {
+    echo -e "${RED}[CRITICAL]${NC} $1"
+}
+
+# Helper function to initialize rbenv safely
+init_rbenv() {
+    # Remove stale shim locks if they exist to prevent rehash errors
+    rm -f "$HOME/.rbenv/shims/.rbenv-shim"
+    
+    # Temporarily disable set -e to prevent rbenv init/rehash failure from stopping the script
+    set +e
+    eval "$(rbenv init -)"
+    set -e
+}
+
+# Helper function to run rbenv rehash safely
+rbenv_rehash() {
+    rm -f "$HOME/.rbenv/shims/.rbenv-shim"
+    set +e
+    rbenv rehash 2>/dev/null
+    set -e
+}
+
+verify_project_environment() {
+    # Check if we are in a Flutter project (presence of pubspec.yaml and android/app/build.gradle)
+    if [ ! -f "pubspec.yaml" ] || [ ! -f "android/app/build.gradle" ]; then
+        print_info "Not executed inside a Flutter project directory. Skipping project-specific verification."
+        return 0
+    fi
+    
+    echo -e "\n${BLUE}=== VERIFYING PROJECT ENVIRONMENT FOR FLUTTER 3.44 ===${NC}"
+    
+    local build_gradle="android/app/build.gradle"
+    local gradle_properties="android/gradle/wrapper/gradle-wrapper.properties"
+    local has_errors=false
+    local has_warnings=false
+    
+    # 1. Check compileSdkVersion / compileSdk
+    if grep -E "compileSdk[vV]ersion|[cC]ompileSdk" "$build_gradle" | grep -q "flutter\."; then
+        echo -e "  • compileSdkVersion: ${GREEN}OK${NC} (Inherited from flutter)"
+    else
+        local compile_sdk=$(grep -E "compileSdk[vV]ersion|[cC]ompileSdk" "$build_gradle" | grep -oE "[0-9]+" | head -n 1 || true)
+        if [ -n "$compile_sdk" ]; then
+            if [ "$compile_sdk" -ge 36 ]; then
+                echo -e "  • compileSdkVersion: ${GREEN}OK${NC} (Version: $compile_sdk)"
+            else
+                echo -e "  • compileSdkVersion: ${YELLOW}WARNING${NC} (Version: $compile_sdk. Khuyến nghị nâng lên >= 36)"
+                has_warnings=true
+            fi
+        else
+            echo -e "  • compileSdkVersion: ${YELLOW}UNKNOWN${NC} (Không tìm thấy định dạng số cứng)"
+        fi
+    fi
+    
+    # 2. Check targetSdkVersion / targetSdk
+    if grep -E "targetSdk[vV]ersion|[tT]argetSdk" "$build_gradle" | grep -q "flutter\."; then
+        echo -e "  • targetSdkVersion: ${GREEN}OK${NC} (Inherited from flutter)"
+    else
+        local target_sdk=$(grep -E "targetSdk[vV]ersion|[tT]argetSdk" "$build_gradle" | grep -oE "[0-9]+" | head -n 1 || true)
+        if [ -n "$target_sdk" ]; then
+            if [ "$target_sdk" -ge 36 ]; then
+                echo -e "  • targetSdkVersion: ${GREEN}OK${NC} (Version: $target_sdk)"
+            else
+                echo -e "  • targetSdkVersion: ${YELLOW}WARNING${NC} (Version: $target_sdk. Khuyến nghị nâng lên >= 36 để cập nhật Play Store)"
+                has_warnings=true
+            fi
+        else
+            echo -e "  • targetSdkVersion: ${YELLOW}UNKNOWN${NC} (Không tìm thấy định dạng số cứng)"
+        fi
+    fi
+    
+    # 3. Check minSdkVersion / minSdk
+    if grep -E "minSdk[vV]ersion|[mM]inSdk" "$build_gradle" | grep -q "flutter\."; then
+        echo -e "  • minSdkVersion: ${GREEN}OK${NC} (Inherited from flutter)"
+    else
+        local min_sdk=$(grep -E "minSdk[vV]ersion|[mM]inSdk" "$build_gradle" | grep -oE "[0-9]+" | head -n 1 || true)
+        if [ -n "$min_sdk" ]; then
+            if [ "$min_sdk" -ge 24 ]; then
+                echo -e "  • minSdkVersion: ${GREEN}OK${NC} (Version: $min_sdk)"
+            elif [ "$min_sdk" -ge 21 ]; then
+                echo -e "  • minSdkVersion: ${YELLOW}WARNING${NC} (Version: $min_sdk. Khuyến nghị nâng lên >= 24 để tương thích thư viện mới)"
+                has_warnings=true
+            else
+                echo -e "  • minSdkVersion: ${RED}ERROR${NC} (Version: $min_sdk. Thấp hơn yêu cầu tối thiểu 21 của Flutter)"
+                has_errors=true
+            fi
+        else
+            echo -e "  • minSdkVersion: ${YELLOW}UNKNOWN${NC} (Không tìm thấy định dạng số cứng)"
+        fi
+    fi
+    
+    # 4. Check Gradle Wrapper Version
+    if [ -f "$gradle_properties" ]; then
+        local gradle_url=$(grep "distributionUrl" "$gradle_properties" || true)
+        local gradle_ver=$(echo "$gradle_url" | grep -oE "gradle-[0-9]+\.[0-9]+(\.[0-9]+)?" | cut -d'-' -f2 || true)
+        
+        if [ -n "$gradle_ver" ]; then
+            local major=$(echo "$gradle_ver" | cut -d'.' -f1)
+            local minor=$(echo "$gradle_ver" | cut -d'.' -f2)
+            
+            local is_valid=false
+            if [ "$major" -gt 7 ]; then
+                is_valid=true
+            elif [ "$major" -eq 7 ] && [ "$minor" -ge 3 ]; then
+                is_valid=true
+            fi
+            
+            if $is_valid; then
+                if [ "$major" -ge 8 ]; then
+                    echo -e "  • Gradle Version: ${GREEN}OK${NC} (Version: $gradle_ver)"
+                else
+                    echo -e "  • Gradle Version: ${YELLOW}WARNING${NC} (Version: $gradle_ver. Khuyến nghị nâng lên >= 8.x để hỗ trợ JDK 17 tốt nhất)"
+                    has_warnings=true
+                fi
+            else
+                echo -e "  • Gradle Version: ${RED}ERROR${NC} (Version: $gradle_ver. Gradle < 7.3 không hỗ trợ JDK 17)"
+                has_errors=true
+            fi
+        else
+            echo -e "  • Gradle Version: ${YELLOW}UNKNOWN${NC} (Không đọc được phiên bản trong $gradle_properties)"
+        fi
+    else
+        echo -e "  • Gradle Version: ${RED}ERROR${NC} (Không tìm thấy tệp $gradle_properties)"
+        has_errors=true
+    fi
+    
+    echo -e "${BLUE}=====================================================${NC}\n"
+    
+    if $has_errors; then
+        print_critical "Dự án hiện tại KHÔNG đáp ứng các yêu cầu bắt buộc tối thiểu cho Flutter 3.44."
+        read -p "Bạn có muốn TẠM DỪNG cài đặt để cập nhật cấu hình dự án trước không? (y/n) [y]: " choice
+        choice="${choice:-y}"
+        if [[ "$choice" == "y" ]] || [[ "$choice" == "Y" ]]; then
+            print_info "Đã dừng cài đặt để bạn cập nhật cấu hình dự án."
+            exit 1
+        fi
+    elif $has_warnings; then
+        print_warning "Cấu hình dự án hiện tại chưa đạt mức khuyến nghị tối ưu cho Flutter 3.44."
+        read -p "Bạn có muốn TẠM DỪNG cài đặt để xem xét nâng cấp cấu hình trước không? (y/n) [y]: " choice
+        choice="${choice:-y}"
+        if [[ "$choice" == "y" ]] || [[ "$choice" == "Y" ]]; then
+            print_info "Đã dừng cài đặt để bạn xem xét nâng cấp cấu hình dự án."
+            exit 1
+        fi
+    else
+        print_info "Dự án của bạn đáp ứng hoàn hảo các yêu cầu cấu hình cho Flutter 3.44!"
+    fi
 }
 
 # Function to request sudo password upfront
@@ -58,8 +227,8 @@ echo -e "  • Xcode Command Line Tools - Essential build tools"
 echo -e "  • Java 17 (OpenJDK) - Required for Android development"
 echo -e ""
 echo -e "${GREEN}iOS Development:${NC}"
-echo -e "  • Ruby (via Homebrew) - Latest stable version"
-echo -e "  • CocoaPods 1.16.2+ (via Homebrew) - iOS dependency manager"
+echo -e "  • Ruby ${RUBY_VERSION} (via rbenv) - Stable version"
+echo -e "  • CocoaPods (via Ruby gem) - iOS dependency manager"
 echo -e "  • libimobiledevice, ideviceinstaller, ios-deploy - iOS build tools"
 echo -e ""
 echo -e "${GREEN}Android Development:${NC}"
@@ -74,6 +243,9 @@ echo -e "\n${BLUE}Installation log: $INSTALL_LOG${NC}"
 echo -e "${YELLOW}To reset and reinstall everything, delete: rm $INSTALL_LOG${NC}"
 echo -e "\n${YELLOW}Press Enter to continue or Ctrl+C to cancel...${NC}"
 read
+
+# Kiểm tra yêu cầu môi trường dự án trước khi cài đặt
+verify_project_environment
 
 # Request sudo password once at the beginning
 request_sudo
@@ -182,13 +354,38 @@ fi
 # ========== Step 3: Install Java 17 ==========
 echo -e "\n${BLUE}[Step 3/7] Installing Java 17 (OpenJDK)...${NC}"
 
+# Verification and auto-fix for Java 17 symlink
+jdk_link="/Library/Java/JavaVirtualMachines/openjdk-17.jdk"
+brew_prefix=$(brew --prefix 2>/dev/null || echo "/opt/homebrew")
+brew_jdk_path="${brew_prefix}/opt/openjdk@17/libexec/openjdk.jdk"
+
+if brew list openjdk@17 &> /dev/null; then
+    if [ ! -d "$jdk_link" ] || [ ! -d "$jdk_link/Contents/Home" ]; then
+        print_warning "Phát hiện Java 17 đã được cài đặt qua Homebrew nhưng liên kết hệ thống ($jdk_link) không tồn tại hoặc bị hỏng."
+        read -p "Bạn có muốn script tự động sửa lỗi này bằng cách tạo lại liên kết (cần quyền sudo)? (y/n) [y]: " choice
+        choice="${choice:-y}"
+        if [[ "$choice" == "y" ]] || [[ "$choice" == "Y" ]]; then
+            echo -e "${YELLOW}Đang tạo lại liên kết hệ thống cho Java 17...${NC}"
+            sudo mkdir -p "/Library/Java/JavaVirtualMachines"
+            sudo ln -sfn "$brew_jdk_path" "$jdk_link"
+            echo -e "${GREEN}✓ Đã tạo liên kết hệ thống thành công.${NC}"
+        else
+            print_info "Bạn chọn tự sửa lỗi. Vui lòng mở một terminal khác và chạy lệnh sau:"
+            echo -e "  sudo mkdir -p /Library/Java/JavaVirtualMachines"
+            echo -e "  sudo ln -sfn $brew_jdk_path $jdk_link"
+            read -p "Sau khi tự chạy xong câu lệnh trên, hãy nhấn Enter tại đây để tiếp tục..."
+        fi
+    fi
+fi
+
 if is_step_completed "java17"; then
     skip_step "Java 17"
 elif ! brew list openjdk@17 &> /dev/null; then
     brew install openjdk@17
     
     # Create symlink
-    sudo ln -sfn $(brew --prefix)/opt/openjdk@17/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-17.jdk
+    sudo mkdir -p "/Library/Java/JavaVirtualMachines"
+    sudo ln -sfn "$brew_jdk_path" "$jdk_link"
     
     log_step "java17"
     echo -e "${GREEN}✓ Java 17 installed${NC}"
@@ -208,54 +405,60 @@ fi
 export JAVA_HOME="$JAVA_HOME_PATH"
 export PATH="$JAVA_HOME/bin:$PATH"
 
-# ========== Step 4: Install Ruby via Homebrew ==========
-echo -e "\n${BLUE}[Step 4/7] Installing Ruby via Homebrew...${NC}"
+# ========== Step 4: Install Ruby via rbenv ==========
+echo -e "\n${BLUE}[Step 4/7] Installing Ruby via rbenv...${NC}"
 
 if is_step_completed "ruby"; then
-    skip_step "Ruby"
+    skip_step "Ruby (rbenv)"
 else
-    # Check if Homebrew Ruby is installed
-    if ! brew list ruby &> /dev/null; then
-        echo -e "${YELLOW}Installing Ruby via Homebrew...${NC}"
-        brew install ruby
+    # Install rbenv and ruby-build if not installed
+    if ! command -v rbenv &> /dev/null; then
+        echo -e "${YELLOW}Installing rbenv and ruby-build...${NC}"
+        brew install rbenv ruby-build
     else
-        echo -e "${GREEN}✓ Ruby already installed via Homebrew${NC}"
+        echo -e "${GREEN}✓ rbenv already installed${NC}"
     fi
-    
-    # Add Ruby to PATH
-    if [[ $(uname -m) == 'arm64' ]]; then
-        RUBY_PATH="/opt/homebrew/opt/ruby/bin"
-        GEM_PATH="/opt/homebrew/lib/ruby/gems"
-    else
-        RUBY_PATH="/usr/local/opt/ruby/bin"
-        GEM_PATH="/usr/local/lib/ruby/gems"
-    fi
-    
-    if ! grep -q "# Ruby configuration" "$SHELL_RC" 2>/dev/null; then
+
+    # Configure shell init for rbenv
+    if ! grep -q "rbenv init" "$SHELL_RC" 2>/dev/null; then
         echo "" >> "$SHELL_RC"
-        echo "# Ruby configuration" >> "$SHELL_RC"
-        echo "export PATH=\"$RUBY_PATH:\$PATH\"" >> "$SHELL_RC"
-        echo "export LDFLAGS=\"-L$(brew --prefix ruby)/lib\"" >> "$SHELL_RC"
-        echo "export CPPFLAGS=\"-I$(brew --prefix ruby)/include\"" >> "$SHELL_RC"
+        echo "# Ruby configuration (rbenv)" >> "$SHELL_RC"
+        echo 'eval "$(rbenv init -)"' >> "$SHELL_RC"
     fi
-    export PATH="$RUBY_PATH:$PATH"
-    
+    init_rbenv
+
+    # Check if selected Ruby version is installed
+    if ! rbenv versions --bare | grep -q "^${RUBY_VERSION}$"; then
+        echo -e "${YELLOW}Installing Ruby ${RUBY_VERSION} via rbenv (this may take a few minutes)...${NC}"
+        rbenv install "${RUBY_VERSION}"
+    else
+        echo -e "${GREEN}✓ Ruby ${RUBY_VERSION} already installed in rbenv${NC}"
+    fi
+
+    # Set global version
+    rbenv global "${RUBY_VERSION}"
+    rbenv shell "${RUBY_VERSION}"
+
     log_step "ruby"
-    echo -e "${GREEN}✓ Ruby installed${NC}"
+    echo -e "${GREEN}✓ Ruby version configured: $(ruby --version)${NC}"
 fi
 
-# ========== Step 5: Install CocoaPods via Homebrew ==========
-echo -e "\n${BLUE}[Step 5/7] Installing CocoaPods via Homebrew...${NC}"
+# ========== Step 5: Install CocoaPods via Ruby Gem ==========
+echo -e "\n${BLUE}[Step 5/7] Installing CocoaPods via Ruby Gem...${NC}"
+
+# Ensure rbenv is active in this shell session
+init_rbenv
 
 if is_step_completed "cocoapods"; then
     skip_step "CocoaPods"
 else
-    # Install CocoaPods via Homebrew
-    if ! brew list cocoapods &> /dev/null; then
-        echo -e "${YELLOW}Installing CocoaPods via Homebrew...${NC}"
-        brew install cocoapods
+    # Install CocoaPods gem
+    if ! gem list -i cocoapods &> /dev/null; then
+        echo -e "${YELLOW}Installing CocoaPods Gem...${NC}"
+        gem install cocoapods
+        rbenv_rehash
     else
-        echo -e "${GREEN}✓ CocoaPods already installed via Homebrew${NC}"
+        echo -e "${GREEN}✓ CocoaPods Gem already installed${NC}"
     fi
     
     # Verify pod is available
@@ -266,13 +469,13 @@ else
         
         # Setup CocoaPods
         if ! is_step_completed "cocoapods-setup"; then
-            echo -e "${YELLOW}Setting up CocoaPods (this may take a few minutes)...${NC}"
-            pod setup --verbose
+            echo -e "${YELLOW}Setting up CocoaPods...${NC}"
+            pod setup --verbose || true
             log_step "cocoapods-setup"
         fi
     else
-        echo -e "${YELLOW}⚠️  CocoaPods installed but not in PATH yet${NC}"
-        echo -e "${YELLOW}⚠️  It will be available after you restart terminal or run: source $SHELL_RC${NC}"
+        echo -e "${RED}Error: CocoaPods was installed but 'pod' command is not found.${NC}"
+        exit 1
     fi
 fi
 
@@ -369,7 +572,8 @@ else
         curl -L --retry 5 --retry-delay 3 "$FLUTTER_URL" -o /tmp/flutter.zip
 
         echo -e "${YELLOW}Extracting Flutter...${NC}"
-        unzip -q /tmp/flutter.zip -d "$HOME"
+        mkdir -p "$(dirname "$FLUTTER_HOME")"
+        unzip -q /tmp/flutter.zip -d "$(dirname "$FLUTTER_HOME")"
         rm /tmp/flutter.zip
         
         log_step "flutter"
@@ -403,6 +607,11 @@ echo -e "\n${BLUE}========================================${NC}"
 echo -e "${GREEN}✓ Installation completed successfully!${NC}"
 echo -e "${BLUE}========================================${NC}"
 
+# Ensure rbenv is active to report correct versions
+if command -v rbenv &>/dev/null; then
+    init_rbenv
+fi
+
 echo -e "\n${YELLOW}Installed versions:${NC}"
 echo -e "Xcode Command Line Tools: $(xcode-select -p 2>/dev/null || echo 'Not installed')"
 if [ -d "/Applications/Xcode.app" ]; then
@@ -430,13 +639,11 @@ else
 fi
 
 echo -e "\n${BLUE}========================================${NC}"
-echo -e "${YELLOW}Loading environment variables...${NC}"
+echo -e "${YELLOW}Lưu ý về biến môi trường...${NC}"
 echo -e "${BLUE}========================================${NC}\n"
 
-# Source the shell configuration file
-source "$SHELL_RC"
-
-echo -e "${GREEN}✓ Environment variables loaded${NC}\n"
+echo -e "${YELLOW}Để áp dụng biến môi trường mới vào terminal hiện tại của bạn, hãy chạy:${NC}"
+echo -e "  ${GREEN}source $SHELL_RC${NC}"
 
 # Run flutter doctor
 echo -e "${BLUE}========================================${NC}"
