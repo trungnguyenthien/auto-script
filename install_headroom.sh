@@ -17,9 +17,123 @@ warn()    { echo -e "${YELLOW}⚠️  $*${RESET}"; }
 error()   { echo -e "${RED}❌ $*${RESET}" >&2; exit 1; }
 header()  { echo -e "\n${BOLD}${CYAN}══ $* ══${RESET}\n"; }
 
-# ─── banner ───────────────────────────────────────────────
-echo -e "${BOLD}${CYAN}"
-cat << 'EOF'
+show_help_content() {
+    header "Hướng dẫn cấu hình Headroom & AI Agents"
+    
+    echo -e "Script này cài đặt Headroom proxy chạy ngầm (local daemon) trên hệ thống"
+    echo -e "tại địa chỉ: ${CYAN}http://localhost:<PORT>${RESET} (mặc định: ${CYAN}http://localhost:8787${RESET})."
+    echo -e "Dưới đây là hướng dẫn cách cấu hình chi tiết cho các Agent:"
+    echo ""
+    echo -e "  ${BOLD}1. Cách cập nhật địa chỉ Base URL đi upstream (LLM Backend):${RESET}"
+    echo -e "     - Tệp lưu cấu hình của Headroom nằm tại: ${CYAN}~/.config/headroom/.env${RESET}."
+    echo -e "     - Hãy sửa trực tiếp tệp này và thay đổi biến ${CYAN}ANTHROPIC_TARGET_API_URL${RESET}."
+    echo ""
+    echo -e "  ${BOLD}2. Cách cập nhật API Key (Token) đi upstream:${RESET}"
+    echo -e "     - Tệp lưu cấu hình của Headroom nằm tại: ${CYAN}~/.config/headroom/.env${RESET}."
+    echo -e "     - Hãy sửa trực tiếp tệp này và thay đổi biến ${CYAN}ANTHROPIC_API_KEY${RESET}."
+    echo -e "     - ${YELLOW}*Lưu ý:${RESET} Bạn không cần cập nhật API Key thật ở các nơi khác. Headroom sẽ tự động thay thế"
+    echo -e "       bằng API Key thật này trước khi gửi đi upstream."
+    echo ""
+    echo -e "  ${BOLD}3. Hướng dẫn cấu hình cho công cụ AI Agent:${RESET}"
+    echo ""
+    echo -e "     ${BOLD}A. CLAUDE CODE (.claude/settings.json):${RESET}"
+    echo -e "        - Claude Code không tự động đọc model từ Headroom, cần được chỉ định rõ ở thuộc tính \"model\"."
+    echo -e "        - ${GREEN}*Bảo mật:${RESET} Bạn có thể để token giả lập (như \"your-api-key\" hoặc \"headroom\") tại đây"
+    echo -e "          để tránh lộ API Key thật khi commit dự án lên Git."
+    echo -e "${CYAN}----------------.claude/settings.json-----------------------"
+    cat << 'EOF'
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:8787",
+    "ANTHROPIC_AUTH_TOKEN": "your-api-key",
+    "ANTHROPIC_API_KEY": "your-api-key",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_INTERLEAVED_THINKING": "1"
+  },
+  "model": "tên-model-của-bạn-ở-backend"
+}
+EOF
+    echo -e "------------------------------------------------------------${RESET}"
+    echo ""
+    echo -e "     ${BOLD}B. ZOO CODE (Roo Code / Cline / VS Code Extensions):${RESET}"
+    echo -e "        - Mở cài đặt (Settings) trong giao diện của extension và thiết lập:"
+    echo -e "          • ${CYAN}API Provider${RESET}: Chọn ${BOLD}Anthropic${RESET} hoặc ${BOLD}OpenAI Compatible${RESET} (tùy LLM Backend)."
+    echo -e "          • ${CYAN}Base URL${RESET}: Nhập ${BOLD}http://localhost:8787${RESET}"
+    echo -e "          • ${CYAN}API Key${RESET}: Nhập token giả lập (như ${BOLD}headroom${RESET} hoặc ${BOLD}your-api-key${RESET})."
+    echo -e "          • ${CYAN}Model ID${RESET}: Nhập tên model thật chạy ở LLM Backend của bạn."
+    echo ""
+    echo -e "     ${BOLD}C. CONTINUE (Continue.dev):${RESET}"
+    echo -e "        - Mở cấu hình tại: ${CYAN}~/.continue/config.yaml${RESET} (hoặc nhấp vào biểu tượng bánh răng)."
+    echo -e "        - Thêm cấu hình model dưới đây vào mục ${CYAN}models:${RESET}"
+    echo -e "${CYAN}----------------~/.continue/config.yaml---------------------"
+    cat << 'EOF'
+models:
+  - name: "Headroom Claude"
+    provider: "anthropic"
+    model: "tên-model-của-bạn-ở-backend"
+    apiBase: "http://localhost:8787/v1"
+    apiKey: "your-api-key"
+EOF
+    echo -e "------------------------------------------------------------${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Khởi động lại Headroom sau khi sửa cấu hình .env:${RESET}"
+    echo -e "     - Bạn chỉ cần chạy lại script này với flag ${CYAN}--restart${RESET} hoặc ${CYAN}-r${RESET}:"
+    echo -e "       ${GREEN}bash install_headroom.sh --restart${RESET}"
+    echo ""
+}
+
+restart_headroom() {
+    info "Đang khởi động lại Headroom proxy..."
+    OS_TYPE="$(uname -s)"
+    
+    # Check if docker container headroom-proxy exists and is running/configured
+    if command -v docker &>/dev/null && docker ps -a --format '{{.Names}}' | grep -Eq "^headroom-proxy$"; then
+        info "Phát hiện Docker container headroom-proxy, đang khởi động lại..."
+        if [[ -f "$HOME/.local/bin/headroom-start" ]]; then
+            bash "$HOME/.local/bin/headroom-start"
+            success "Khởi động lại Docker container thành công!"
+            exit 0
+        else
+            docker stop headroom-proxy &>/dev/null || true
+            docker start headroom-proxy &>/dev/null || true
+            success "Khởi động lại Docker container thành công!"
+            exit 0
+        fi
+    fi
+
+    if [[ "$OS_TYPE" == "Darwin" ]]; then
+        PLIST_FILE="$HOME/Library/LaunchAgents/ai.headroom.proxy.plist"
+        if [[ -f "$PLIST_FILE" ]]; then
+            info "Khởi động lại LaunchAgent (macOS)..."
+            launchctl unload "$PLIST_FILE" 2>/dev/null || true
+            launchctl load "$PLIST_FILE"
+            success "Khởi động lại LaunchAgent thành công!"
+        else
+            error "Không tìm thấy file launchd plist tại: $PLIST_FILE"
+        fi
+    elif [[ "$OS_TYPE" == "Linux" ]]; then
+        SERVICE_FILE="$HOME/.config/systemd/user/headroom-proxy.service"
+        if [[ -f "$SERVICE_FILE" ]] || systemctl --user list-unit-files | grep -q "headroom-proxy.service"; then
+            info "Khởi động lại systemd service (Linux)..."
+            systemctl --user restart headroom-proxy
+            success "Khởi động lại systemd service thành công!"
+        else
+            error "Không tìm thấy systemd service cho headroom-proxy."
+        fi
+    else
+        error "Hệ điều hành không hỗ trợ tự động restart: $OS_TYPE"
+    fi
+    exit 0
+}
+
+show_help() {
+    show_help_content
+    exit 0
+}
+
+show_banner() {
+    echo -e "${BOLD}${CYAN}"
+    cat << 'EOF'
   _   _                _
  | | | | ___  __ _  __| |_ __ ___   ___  _ __ ___
  | |_| |/ _ \/ _` |/ _` | '__/ _ \ / _ \| '_ ` _ \
@@ -27,9 +141,49 @@ cat << 'EOF'
  |_| |_|\___|\__,_|\__,_|_|  \___/ \___/|_| |_| |_|
   + Claude Code Auto-Config
 EOF
-echo -e "${RESET}"
-echo -e "  Context compression proxy cho AI agents (60–95% ít tokens hơn)"
-echo -e "  Repo: https://github.com/chopratejas/headroom\n"
+    echo -e "${RESET}"
+    echo -e "  Context compression proxy cho AI agents (60–95% ít tokens hơn)"
+    echo -e "  Repo: https://github.com/chopratejas/headroom\n"
+}
+
+show_welcome_message() {
+    show_banner
+    header "Hướng dẫn sử dụng"
+    echo -e "Vui lòng chạy script với một trong các flag sau:"
+    echo -e "  ${CYAN}--install${RESET}, ${CYAN}-i${RESET}  : Thực hiện cài đặt mới và cấu hình Headroom proxy."
+    echo -e "  ${CYAN}--restart${RESET}, ${CYAN}-r${RESET}  : Khởi động lại daemon/container Headroom đang hoạt động."
+    echo -e "  ${CYAN}--help${RESET}, ${CYAN}-h${RESET}     : Xem hướng dẫn cấu hình chi tiết cho các AI Agent (Claude Code, Zoo Code, Continue.dev)."
+    echo ""
+    echo -e "Ví dụ:"
+    echo -e "  ${GREEN}bash install_headroom.sh --install${RESET}"
+    echo -e "  ${GREEN}bash install_headroom.sh --restart${RESET}"
+    echo -e "  ${GREEN}bash install_headroom.sh --help${RESET}"
+    echo ""
+}
+
+# Xử lý các flag
+if [[ $# -eq 0 ]]; then
+    show_welcome_message
+    exit 0
+fi
+
+# Parsing flags
+case "${1}" in
+    --help|-h)
+        show_help
+        ;;
+    --restart|-r)
+        restart_headroom
+        ;;
+    --install|-i)
+        show_banner
+        ;;
+    *)
+        echo -e "${RED}Lỗi: Flag không hợp lệ: ${1}${RESET}" >&2
+        show_welcome_message
+        exit 1
+        ;;
+esac
 
 # ─── kiểm tra prerequisites ───────────────────────────────
 header "Kiểm tra prerequisites"
@@ -140,10 +294,6 @@ echo ""
 read -rp "$(echo -e "${CYAN}ANTHROPIC_AUTH_TOKEN${RESET} (token/api-key cho backend trên, Enter để bỏ qua): ")" USER_AUTH_TOKEN
 USER_AUTH_TOKEN="${USER_AUTH_TOKEN:-}"
 
-echo ""
-read -rp "$(echo -e "${CYAN}Model mặc định${RESET} (Enter để bỏ qua, ví dụ: aws/claude-sonnet-4-6-medium): ")" DEFAULT_MODEL
-DEFAULT_MODEL="${DEFAULT_MODEL:-}"
-
 # Port headroom proxy
 HEADROOM_PORT=8787
 echo ""
@@ -153,8 +303,8 @@ HEADROOM_PORT="${INPUT_PORT:-$HEADROOM_PORT}"
 # Chọn phương thức cài đặt
 echo ""
 header "Phương thức cài đặt"
-echo "  1) pip  — cài headroom-ai vào Python environment hiện tại"
-echo "  2) pipx — cài isolated (khuyến nghị nếu dùng global)"
+echo "  1) pipx — cài isolated (khuyến nghị nếu dùng global)"
+echo "  2) pip  — cài headroom-ai vào Python environment hiện tại"
 echo "  3) docker — chạy headroom trong container (không cần pip)"
 echo ""
 read -rp "$(echo -e "${CYAN}Chọn [1/2/3]${RESET} [1]: ")" INSTALL_MODE
@@ -165,11 +315,6 @@ header "Cài đặt Headroom"
 
 case "$INSTALL_MODE" in
     1)
-        info "Cài headroom-ai[all] via pip..."
-        "$PYTHON_BIN" -m pip install --upgrade "headroom-ai[all]"
-        HEADROOM_CMD="headroom"
-        ;;
-    2)
         if ! command -v pipx &>/dev/null; then
             info "Cài pipx..."
             "$PYTHON_BIN" -m pip install pipx
@@ -177,6 +322,11 @@ case "$INSTALL_MODE" in
         info "Cài headroom-ai[all] via pipx..."
         pipx install --python "$PYTHON_BIN" "headroom-ai[all]" 2>/dev/null || \
             pipx upgrade "headroom-ai[all]"
+        HEADROOM_CMD="headroom"
+        ;;
+    2)
+        info "Cài headroom-ai[all] via pip..."
+        "$PYTHON_BIN" -m pip install --upgrade "headroom-ai[all]"
         HEADROOM_CMD="headroom"
         ;;
     3)
@@ -413,52 +563,7 @@ EOF
     success "Đã kích hoạt systemd service: headroom-proxy"
 fi
 
-# ─── tạo .claude/settings.json ────────────────────────────
-header "Cấu hình Claude Code (.claude/settings.json)"
 
-CLAUDE_DIR=".claude"
-mkdir -p "$CLAUDE_DIR"
-SETTINGS_FILE="$CLAUDE_DIR/settings.json"
-
-# Headroom proxy sẽ lắng nghe ở localhost:$HEADROOM_PORT
-HEADROOM_URL="http://localhost:${HEADROOM_PORT}"
-
-# Build JSON — có model hoặc không
-if [[ -n "$DEFAULT_MODEL" ]]; then
-    MODEL_LINE='"model": "'"$DEFAULT_MODEL"'",'
-else
-    MODEL_LINE=""
-fi
-
-# Auth token cho Claude Code → trỏ tới headroom proxy
-# headroom sẽ dùng HEADROOM_UPSTREAM_TOKEN để forward upstream
-cat > "$SETTINGS_FILE" << EOF
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "${HEADROOM_URL}",
-    "ANTHROPIC_AUTH_TOKEN": "${USER_AUTH_TOKEN:-headroom}",
-    "ANTHROPIC_API_KEY": "${USER_AUTH_TOKEN:-headroom}",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "DISABLE_INTERLEAVED_THINKING": "1"
-  }${MODEL_LINE:+,
-  ${MODEL_LINE%,}}
-}
-EOF
-
-# Tidy lại nếu không có model (bỏ dấu phẩy thừa)
-if [[ -n "$DEFAULT_MODEL" ]]; then
-    "$PYTHON_BIN" - << PYEOF
-import json, pathlib
-p = pathlib.Path("$SETTINGS_FILE")
-d = json.loads(p.read_text())
-d["model"] = "$DEFAULT_MODEL"
-p.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n")
-PYEOF
-fi
-
-success "Đã tạo $SETTINGS_FILE"
-echo ""
-cat "$SETTINGS_FILE"
 
 # ─── tóm tắt kiến trúc ────────────────────────────────────
 header "Kiến trúc sau khi cài"
@@ -505,7 +610,6 @@ fi
 header "Hoàn thành 🎉"
 
 echo -e "  ${BOLD}Các file đã tạo:${RESET}"
-echo -e "  • ${CYAN}$SETTINGS_FILE${RESET}     ← Claude Code đọc tự động"
 echo -e "  • ${CYAN}$ENV_FILE${RESET}"
 echo -e "  • ${CYAN}$START_SCRIPT${RESET}"
 echo ""
@@ -530,3 +634,6 @@ echo -e "  • ${CYAN}headroom stats${RESET}"
 echo ""
 echo -e "  ${BOLD}Docs:${RESET} https://headroom-docs.vercel.app/docs"
 echo ""
+
+# In hướng dẫn cấu hình AI Agent sau khi cài đặt thành công
+show_help_content

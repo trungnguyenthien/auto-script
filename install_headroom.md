@@ -1,15 +1,15 @@
 # install-headroom.sh
 
-Script tự động cài đặt [Headroom](https://github.com/chopratejas/headroom) — context compression proxy cho Claude Code — và cấu hình toàn bộ `.claude/settings.json` chỉ với một lần chạy.
+Script tự động cài đặt [Headroom](https://github.com/chopratejas/headroom) — một context compression proxy giúp nén context cho AI Agents (như Claude Code và các agent khác) chạy ngầm (daemon) cục bộ.
 
 ---
 
 ## Headroom là gì?
 
-Headroom là một proxy đứng giữa Claude Code và LLM backend, tự động nén context trước khi gửi request. Kết quả là ít token hơn 60–95% mà output không thay đổi, giúp giảm chi phí và tăng tốc độ phản hồi đáng kể khi làm việc với các tác vụ có context lớn như code review, tool calls, hay RAG.
+Headroom là một proxy đứng giữa AI Agent và LLM backend, tự động nén context trước khi gửi request. Kết quả là ít token hơn 60–95% mà output không thay đổi, giúp giảm chi phí và tăng tốc độ phản hồi đáng kể khi làm việc với các tác vụ có context lớn như code review, tool calls, hay RAG.
 
 ```
-Claude Code
+AI Agent (e.g. Claude Code)
     │  ANTHROPIC_BASE_URL=http://localhost:8787
     ▼
 ┌─────────────────────────────────────────┐
@@ -40,28 +40,30 @@ https://your-backend.com/api  (Ollama, OpenRouter, Vertex, v.v.)
 ### Bước 1 — Tải script
 
 ```bash
-curl -O https://raw.githubusercontent.com/your-repo/install-headroom.sh
-# hoặc
-wget https://raw.githubusercontent.com/your-repo/install-headroom.sh
+curl -O https://raw.githubusercontent.com/trungnguyenthien/auto-script/refs/heads/main/install_headroom.sh
 ```
 
 ### Bước 2 — Chạy script
 
-> **Quan trọng:** chạy script từ thư mục project của bạn — file `.claude/settings.json` sẽ được tạo tại đây.
+Để thực hiện cài đặt mới và tự động cấu hình Headroom proxy, hãy chạy script bằng cờ `--install` (hoặc `-i`):
 
 ```bash
-cd /path/to/your/project
-bash install-headroom.sh
+bash install_headroom.sh --install
+```
+
+Để xem danh sách các flag được hỗ trợ, bạn có thể chạy script trực tiếp không kèm flag hoặc xem hướng dẫn cấu hình chi tiết cho các Agent thông qua cờ `--help` (hoặc `-h`):
+
+```bash
+bash install_headroom.sh --help
 ```
 
 ### Bước 3 — Trả lời các câu hỏi
 
-Script hỏi lần lượt 5 thông tin:
+Script hỏi lần lượt 4 thông tin:
 
 ```
 CUSTOM_ANTHROPIC_BASE_URL : http://localhost:11434
 ANTHROPIC_AUTH_TOKEN      : your-api-key-here
-Model mặc định            : minimax-m3:cloud   (Enter để bỏ qua)
 Port cho Headroom proxy   : 8787               (Enter để giữ mặc định)
 Chọn chế độ cài [1/2/3]  : 1
 ```
@@ -87,16 +89,6 @@ URL của LLM backend thực sự mà bạn muốn dùng. Headroom sẽ forward 
 
 API key hoặc token cho backend ở trên. Nếu bỏ qua, script dùng chuỗi `headroom` làm placeholder.
 
-### `Model mặc định` _(tuỳ chọn)_
-
-Tên model theo cú pháp của backend. Nếu để trống, không ghi vào `settings.json` — Claude Code sẽ dùng model mặc định của nó.
-
-```
-minimax-m3:cloud
-aws/claude-sonnet-4-6-medium
-glm-5.1:cloud
-```
-
 ### Port _(mặc định: 8787)_
 
 Port Headroom proxy lắng nghe trên máy local. Chỉ thay đổi nếu port này đã bị chiếm bởi service khác.
@@ -105,8 +97,8 @@ Port Headroom proxy lắng nghe trên máy local. Chỉ thay đổi nếu port n
 
 | Chế độ     | Mô tả                                             | Khi nào dùng            |
 | ---------- | ------------------------------------------------- | ----------------------- |
-| `1` pip    | Cài `headroom-ai` vào Python environment hiện tại | Nhanh, đơn giản         |
-| `2` pipx   | Cài isolated, không ảnh hưởng Python global       | Khuyến nghị cho máy dev |
+| `1` pipx   | Cài isolated, không ảnh hưởng Python global       | Khuyến nghị cho máy dev |
+| `2` pip    | Cài `headroom-ai` vào Python environment hiện tại | Nhanh, đơn giản         |
 | `3` docker | Chạy headroom trong container                     | Không muốn cài Python   |
 
 ---
@@ -166,26 +158,7 @@ bash ~/.local/bin/headroom-start
 - **macOS** — tạo `~/Library/LaunchAgents/ai.headroom.proxy.plist`, đăng ký với `launchctl`. Headroom tự chạy khi login.
 - **Linux** — tạo `~/.config/systemd/user/headroom-proxy.service`, enable với `systemctl --user`. Headroom tự chạy khi login.
 
-### 6. Tạo `.claude/settings.json`
-
-Ghi vào thư mục hiện tại — Claude Code tự đọc khi chạy `claude` trong thư mục đó:
-
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:8787",
-    "ANTHROPIC_AUTH_TOKEN": "your-api-key",
-    "ANTHROPIC_API_KEY": "your-api-key",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "DISABLE_INTERLEAVED_THINKING": "1"
-  },
-  "model": "minimax-m3:cloud"
-}
-```
-
-`ANTHROPIC_BASE_URL` luôn trỏ vào Headroom proxy (`localhost:8787`), không phải backend trực tiếp.
-
-### 7. Quick test
+### 6. Quick test
 
 Khởi động Headroom một lần để xác nhận không có lỗi, sau đó dừng lại — service thực sự được quản lý bởi launchd/systemd.
 
@@ -194,7 +167,6 @@ Khởi động Headroom một lần để xác nhận không có lỗi, sau đó
 ## Các file được tạo ra
 
 ```
-.claude/settings.json                          ← project hiện tại
 ~/.config/headroom/.env                        ← config upstream
 ~/.local/bin/headroom-start                    ← start script thủ công
 ~/Library/LaunchAgents/ai.headroom.proxy.plist ← macOS auto-start
@@ -244,6 +216,14 @@ docker stop headroom-proxy && docker rm headroom-proxy
 
 # Xem logs
 docker logs -f headroom-proxy
+```
+
+### Khởi động lại (Restart) nhanh
+
+Sau khi bạn thay đổi cấu hình trong tệp `.env`, thay vì chạy các lệnh thủ công ở trên, bạn chỉ cần chạy lại script này với cờ `--restart` (hoặc `-r`):
+
+```bash
+bash install_headroom.sh --restart
 ```
 
 ---
@@ -321,6 +301,51 @@ grep -r "ANTHROPIC" ~/.bashrc ~/.zshrc ~/.zprofile ~/.profile 2>/dev/null
 
 # Unset tạm thời
 unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
+```
+
+---
+
+## Hướng dẫn cấu hình cho công cụ AI Agent
+
+### A. Claude Code (.claude/settings.json)
+
+Claude Code không tự động đọc model từ Headroom, cần được chỉ định rõ ở thuộc tính `"model"`. Bạn có thể lưu cấu hình này trực tiếp vào tệp `.claude/settings.json` trong thư mục dự án của bạn:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:8787",
+    "ANTHROPIC_AUTH_TOKEN": "your-api-key",
+    "ANTHROPIC_API_KEY": "your-api-key",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_INTERLEAVED_THINKING": "1"
+  },
+  "model": "tên-model-của-bạn-ở-backend"
+}
+```
+
+> [!TIP]
+> **Bảo mật:** Bạn có thể để token giả lập (như `"your-api-key"` hoặc `"headroom"`) tại đây để tránh lộ API Key thật khi commit dự án lên Git. Headroom sẽ tự động nạp API Key thật từ file cấu hình chung trước khi gửi request đi upstream.
+
+### B. Zoo Code (Roo Code / Cline)
+
+Nếu sử dụng extension **Zoo Code** hoặc **Roo Code** / **Cline** trên VS Code, bạn cấu hình trực tiếp qua giao diện Settings của extension:
+- **API Provider**: Chọn `Anthropic` hoặc `OpenAI Compatible` (tùy thuộc LLM Backend).
+- **Base URL**: Nhập `http://localhost:8787` (hoặc port proxy của bạn).
+- **API Key**: Nhập token giả lập (như `headroom` hoặc `your-api-key`).
+- **Model ID**: Nhập tên model thực tế đang chạy ở backend của bạn.
+
+### C. Continue (Continue.dev)
+
+Nếu sử dụng extension **Continue** trên VS Code hoặc JetBrains, bạn cấu hình thông qua tệp `~/.continue/config.yaml` (hoặc nhấp vào biểu tượng bánh răng ở góc dưới thanh sidebar của Continue) và bổ sung model mới vào mục `models`:
+
+```yaml
+models:
+  - name: "Headroom Claude"
+    provider: "anthropic"
+    model: "tên-model-của-bạn-ở-backend"
+    apiBase: "http://localhost:8787/v1"
+    apiKey: "your-api-key"
 ```
 
 ---
