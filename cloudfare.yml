@@ -1,0 +1,16 @@
+# cloudfare.yml — routes for cloudfare.sh
+#
+# Format (hosts-style, one route per line):
+#   <domain> <port>
+#
+# - Lines starting with '#' are comments.
+# - `tunnel_name: <name>` (optional, uncomment to override the default
+#   `tunnel-<hostname>` that the script auto-generates).
+# - Whitespace between domain and port can be spaces or tabs.
+# - Port must be a number between 1 and 65535.
+
+# tunnel_name: tunnel-my-machine   # (default: tunnel-<hostname>)
+
+# Example entries — replace with your real domains and local ports:
+myapp.ngthientrung.com 12345
+api.ngthientrung.com 3000
