@@ -23,6 +23,11 @@
 
 set -u
 
+# Force UTF-8 so emoji icons (✅ ❌ ⚠️ 👉) render correctly
+# in Git Bash on Windows (otherwise mintty/cmd may show mojibake).
+export LANG="${LANG:-en_US.UTF-8}"
+export LC_ALL="${LC_ALL:-en_US.UTF-8}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/cloudfare.yml"
 
@@ -429,7 +434,9 @@ extract_port_from_service() {
 }
 
 # TCP-connect check: returns "✅ up" if localhost:<port> is listening,
-# "❌ down" otherwise. Uses `nc -z` if available, else bash /dev/tcp.
+# "❌ down" otherwise. Uses `nc -z` if available, else falls back
+# through OS-specific options (PowerShell on Windows, python3 elsewhere,
+# bash /dev/tcp as last resort).
 test_tcp_target() {
   local port="$1"
   if [ -z "$port" ] || ! echo "$port" | grep -Eq '^[0-9]+$'; then
@@ -437,19 +444,54 @@ test_tcp_target() {
     return
   fi
   if command -v nc >/dev/null 2>&1; then
-    if nc -z localhost "$port" 2>/dev/null; then
-      echo "✅ up"
-    else
-      echo "❌ down"
-    fi
-  else
-    # bash builtin fallback (Git Bash, minimal containers, etc.)
-    if (echo >/dev/tcp/localhost/"$port") 2>/dev/null; then
-      echo "✅ up"
-    else
-      echo "❌ down"
-    fi
+    nc -z localhost "$port" 2>/dev/null && echo "✅ up" || echo "❌ down"
+    return
   fi
+  case "$OS" in
+    windows)
+      # PowerShell is bundled with Windows 7+/11. Test-NetConnection returns
+      # True if the port accepts a TCP connection within 1 second.
+      if powershell.exe -NoProfile -Command "
+        try {
+          (Test-NetConnection -ComputerName 'localhost' -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue) | Out-String
+        } catch { 'False' }
+      " 2>/dev/null | tr -d '\r\n ' | grep -qi '^true'; then
+        echo "✅ up"
+      else
+        echo "❌ down"
+      fi
+      ;;
+    *)
+      # Try python3 first (works on macOS, Linux, WSL), then bash /dev/tcp.
+      if command -v python3 >/dev/null 2>&1; then
+        if python3 -c "
+import socket, sys
+s = socket.socket(); s.settimeout(0.5)
+try: s.connect(('localhost', int(sys.argv[1]))); s.close(); sys.exit(0)
+except Exception: sys.exit(1)
+" "$port" 2>/dev/null; then
+          echo "✅ up"
+        else
+          echo "❌ down"
+        fi
+      elif command -v python >/dev/null 2>&1; then
+        if python -c "
+import socket, sys
+s = socket.socket(); s.settimeout(0.5)
+try: s.connect(('localhost', int(sys.argv[1]))); s.close(); sys.exit(0)
+except Exception: sys.exit(1)
+" "$port" 2>/dev/null; then
+          echo "✅ up"
+        else
+          echo "❌ down"
+        fi
+      elif (echo >/dev/tcp/localhost/"$port") 2>/dev/null; then
+        echo "✅ up"
+      else
+        echo "❌ down"
+      fi
+      ;;
+  esac
 }
 
 route_dns() {
