@@ -313,30 +313,28 @@ copy_to_clipboard() {
 
 get_tunnel_id() {
   # Parse `cloudflared tunnel list -o json` (a JSON array of {id,name,...})
-  # without requiring jq. We look for the object whose "name":"<name>" field
-  # matches $1, then grab its "id" value.
+  # without requiring jq. The output is pretty-printed multi-line, so we
+  # accumulate `name` and `id` fields across lines until the object ends
+  # (a closing `}`).
   cloudflared tunnel list -o json 2>/dev/null | \
     awk -v want="$1" '
       {
-        # Strip the opening/closing [ ] and treat as a stream of objects.
-        s = $0
-        # Replace commas at end-of-line with nothing so we can split.
-        gsub(/,[[:space:]]*$/, "", s)
-        # Find "name":"..." and "id":"..."
-        n = ""; i = ""
-        if (match(s, /"name"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
-          t = substr(s, RSTART, RLENGTH)
+        if (match($0, /"name"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+          t = substr($0, RSTART, RLENGTH)
           sub(/^"name"[[:space:]]*:[[:space:]]*"/, "", t)
           sub(/"$/, "", t)
-          n = t
+          cur_name = t
         }
-        if (match(s, /"id"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
-          t = substr(s, RSTART, RLENGTH)
+        if (match($0, /"id"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+          t = substr($0, RSTART, RLENGTH)
           sub(/^"id"[[:space:]]*:[[:space:]]*"/, "", t)
           sub(/"$/, "", t)
-          i = t
+          cur_id = t
         }
-        if (n == want && i != "") { print i; exit }
+        if (index($0, "}") > 0) {
+          if (cur_name == want && cur_id != "") { print cur_id; exit }
+          cur_name = ""; cur_id = ""
+        }
       }
     '
 }
@@ -374,11 +372,67 @@ write_config_yml() {
   echo "Wrote tunnel config to: $config_path"
 }
 
-# List of domains already declared in the active tunnel's config.yml
-routed_domains() {
+# Read all ingress entries from ~/.cloudflared/config.yml.
+# Output per line: "<hostname>\t<service>\t<is_local>" where is_local
+# is 1 if service contains "localhost:" (route owned by this machine),
+# 0 otherwise (route owned by another machine in the same zone).
+parse_tunnel_routes() {
   local config_path="$HOME/.cloudflared/config.yml"
-  if [ -f "$config_path" ]; then
-    awk '/^[[:space:]]*-[[:space:]]*hostname:/ { sub(/^[[:space:]]*-[[:space:]]*hostname:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print }' "$config_path"
+  [ -f "$config_path" ] || return 0
+  awk '
+    /^[[:space:]]*-[[:space:]]*hostname:/ {
+      # flush previous entry
+      if (host != "" && svc != "" && svc !~ /^http_status:/) {
+        is_local = (svc ~ /localhost:/) ? 1 : 0
+        printf "%s\t%s\t%d\n", host, svc, is_local
+      }
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*hostname:[[:space:]]*/, "", line)
+      sub(/[[:space:]]*$/, "", line)
+      host = line
+      svc = ""
+    }
+    /^[[:space:]]*service:/ {
+      line = $0
+      sub(/^[[:space:]]*service:[[:space:]]*/, "", line)
+      sub(/[[:space:]]*$/, "", line)
+      svc = line
+    }
+    END {
+      if (host != "" && svc != "" && svc !~ /^http_status:/) {
+        is_local = (svc ~ /localhost:/) ? 1 : 0
+        printf "%s\t%s\t%d\n", host, svc, is_local
+      }
+    }
+  ' "$config_path"
+}
+
+# Extract the port from a service URL like "http://localhost:8080".
+extract_port_from_service() {
+  echo "$1" | grep -oE ':[0-9]+$' | tr -d ':'
+}
+
+# TCP-connect check: returns "✅ up" if localhost:<port> is listening,
+# "❌ down" otherwise. Uses `nc -z` if available, else bash /dev/tcp.
+test_tcp_target() {
+  local port="$1"
+  if [ -z "$port" ] || ! echo "$port" | grep -Eq '^[0-9]+$'; then
+    echo "—"
+    return
+  fi
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z localhost "$port" 2>/dev/null; then
+      echo "✅ up"
+    else
+      echo "❌ down"
+    fi
+  else
+    # bash builtin fallback (Git Bash, minimal containers, etc.)
+    if (echo >/dev/tcp/localhost/"$port") 2>/dev/null; then
+      echo "✅ up"
+    else
+      echo "❌ down"
+    fi
   fi
 }
 
@@ -391,11 +445,11 @@ route_dns() {
     return
   fi
 
-  # Read routed domains into array
+  # Read currently-routed domains (from the live config.yml) into array
   local d
-  while IFS= read -r d; do
+  while IFS=$'\t' read -r d _ _; do
     [ -n "$d" ] && routed+=("$d")
-  done < <(routed_domains)
+  done < <(parse_tunnel_routes)
 
   local i
   for ((i = 0; i < ${#__ROUTE_DOMAINS[@]}; i++)); do
@@ -449,30 +503,68 @@ show_full_status() {
   config_path="$HOME/.cloudflared/config.yml"
 
   echo ""
-  echo "=== STATUS ==="
+  echo "=== STATUS (from cloudflared) ==="
   echo "Hostname:        $(hostname 2>/dev/null || echo "?")"
   echo "Tunnel name:     $tunnel_name"
-  echo "Tunnel ID:       ${tunnel_id:-"(unknown)"}"
+  echo "Tunnel ID:       ${tunnel_id:-(not created — run 'Sync now')}"
   echo "config.yml:      $config_path"
-  echo "Config source:   $CONFIG_FILE"
   echo ""
   echo "Tunnel connection:"
   if [ -n "$tunnel_id" ]; then
     cloudflared tunnel info "$tunnel_name" 2>&1 | sed 's/^/  /'
+  elif [ -z "$tunnel_name" ]; then
+    echo "  (tunnel name not set)"
   else
-    echo "  (unavailable)"
+    echo "  (tunnel '$tunnel_name' not found on Cloudflare — run 'Sync now' to create it)"
   fi
   echo ""
-  echo "Active routes:"
-  local count
-  count=$(route_count)
-  if [ "$count" -eq 0 ]; then
+
+  if [ ! -f "$config_path" ]; then
+    echo "Routes: (config.yml not found on this machine)"
+    echo "==============="
+    return
+  fi
+
+  # Read all tunnel routes
+  local -a all_d=() all_s=() all_local=()
+  local d s loc
+  while IFS=$'\t' read -r d s loc; do
+    [ -n "$d" ] || continue
+    all_d+=("$d")
+    all_s+=("$s")
+    all_local+=("$loc")
+  done < <(parse_tunnel_routes)
+
+  # Split into "this machine" (localhost:) vs "other machine"
+  local -a my_d=() my_s=() other_d=() other_s=()
+  local i port status
+  for ((i = 0; i < ${#all_d[@]}; i++)); do
+    if [ "${all_local[$i]}" = "1" ]; then
+      my_d+=("${all_d[$i]}")
+      my_s+=("${all_s[$i]}")
+    else
+      other_d+=("${all_d[$i]}")
+      other_s+=("${all_s[$i]}")
+    fi
+  done
+
+  echo "Routes on THIS machine (service: localhost:*):"
+  if [ "${#my_d[@]}" -eq 0 ]; then
     echo "  (none)"
   else
-    local i
-    read_routes
-    for ((i = 0; i < ${#__ROUTE_DOMAINS[@]}; i++)); do
-      echo "  - https://${__ROUTE_DOMAINS[$i]}  ->  http://localhost:${__ROUTE_PORTS[$i]}"
+    for ((i = 0; i < ${#my_d[@]}; i++)); do
+      port=$(extract_port_from_service "${my_s[$i]}")
+      status=$(test_tcp_target "$port")
+      printf "  - %-40s -> localhost:%-5s  target: %s\n" "${my_d[$i]}" "$port" "$status"
+    done
+  fi
+  echo ""
+  echo "Routes on OTHER machines in same zone:"
+  if [ "${#other_d[@]}" -eq 0 ]; then
+    echo "  (none)"
+  else
+    for ((i = 0; i < ${#other_d[@]}; i++)); do
+      printf "  - %-40s -> %s\n" "${other_d[$i]}" "${other_s[$i]}"
     done
   fi
   echo "==============="
