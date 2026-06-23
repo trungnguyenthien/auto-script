@@ -284,21 +284,42 @@ ensure_login() {
       cloudflared tunnel login
       ;;
     2)
-      local login_url="https://dash.cloudflare.com/argotunnel"
-      echo "Open this URL on another machine (where you can log in):"
-      echo "  $login_url"
-      if copy_to_clipboard "$login_url"; then
-        echo "✅ Copied to clipboard."
+      echo "Starting login — capturing the real login URL..."
+      local log_file
+      log_file="$(mktemp 2>/dev/null || echo "/tmp/cloudfare_login_$$.log")"
+      cloudflared tunnel login > "$log_file" 2>&1 &
+      local login_pid=$!
+
+      local login_url=""
+      local attempt
+      for attempt in $(seq 1 40); do
+        login_url=$(grep -oE 'https://dash\.cloudflare\.com/argotunnel[^[:space:]]*' "$log_file" 2>/dev/null | head -n1)
+        [ -n "$login_url" ] && break
+        sleep 0.5
+      done
+
+      if [ -n "$login_url" ]; then
+        echo "Open this URL on another machine (where you can log in):"
+        echo "  $login_url"
+        if copy_to_clipboard "$login_url"; then
+          echo "✅ Copied to clipboard."
+        else
+          echo "(Could not copy automatically — please copy it manually.)"
+        fi
       else
-        echo "(Could not copy automatically — please copy it manually.)"
+        echo "⚠️  Could not detect the login URL automatically. Check the"
+        echo "    output below once it appears, and copy the URL manually:"
+        cat "$log_file" 2>/dev/null
       fi
       echo ""
       echo "On that machine: log in → select your domain → click 'Authorize'."
-      echo "This script auto-receives the result. Just wait."
+      echo "Waiting for login to complete..."
       echo "======================================================="
       echo ""
 
-      cloudflared tunnel login --loginURL "$login_url"
+      wait "$login_pid"
+      cat "$log_file" 2>/dev/null
+      rm -f "$log_file" 2>/dev/null
       ;;
     *)
       echo "Invalid choice."
@@ -333,28 +354,35 @@ copy_to_clipboard() {
 }
 
 get_tunnel_id() {
-  # Parse `cloudflared tunnel list -o json` (a JSON array of {id,name,...})
-  # without requiring jq. The output is pretty-printed multi-line, so we
-  # accumulate `name` and `id` fields across lines until the object ends
-  # (a closing `}`).
+  # Parse `cloudflared tunnel list -o json` without jq. Tracks brace
+  # depth so nested objects (e.g. "connections": [...]) don't corrupt
+  # the result.
   cloudflared tunnel list -o json 2>/dev/null | \
     awk -v want="$1" '
+      BEGIN { depth = 0; cur_name = ""; cur_id = "" }
       {
-        if (match($0, /"name"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
-          t = substr($0, RSTART, RLENGTH)
-          sub(/^"name"[[:space:]]*:[[:space:]]*"/, "", t)
-          sub(/"$/, "", t)
-          cur_name = t
+        line = $0
+        if (depth == 2) {
+          if (match(line, /"name"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+            t = substr(line, RSTART, RLENGTH)
+            sub(/^"name"[[:space:]]*:[[:space:]]*"/, "", t); sub(/"$/, "", t)
+            cur_name = t
+          }
+          if (match(line, /"id"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+            t = substr(line, RSTART, RLENGTH)
+            sub(/^"id"[[:space:]]*:[[:space:]]*"/, "", t); sub(/"$/, "", t)
+            cur_id = t
+          }
         }
-        if (match($0, /"id"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
-          t = substr($0, RSTART, RLENGTH)
-          sub(/^"id"[[:space:]]*:[[:space:]]*"/, "", t)
-          sub(/"$/, "", t)
-          cur_id = t
-        }
-        if (index($0, "}") > 0) {
-          if (cur_name == want && cur_id != "") { print cur_id; exit }
-          cur_name = ""; cur_id = ""
+        tmp = line; n_open  = gsub(/[{[]/, "", tmp)
+        tmp = line; n_close = gsub(/[}\]]/, "", tmp)
+        for (k = 0; k < n_open; k++) depth++
+        for (k = 0; k < n_close; k++) {
+          if (depth == 2) {
+            if (cur_name == want && cur_id != "") { print cur_id; exit }
+            cur_name = ""; cur_id = ""
+          }
+          depth--
         }
       }
     '
@@ -371,15 +399,23 @@ ensure_tunnel() {
 }
 
 write_config_yml() {
-  local tunnel_name tunnel_id cred_file config_path
+  local tunnel_name tunnel_id cred_file config_path cred_file_for_yaml
   tunnel_name=$(get_tunnel_name)
   tunnel_id=$(get_tunnel_id "$tunnel_name")
   cred_file="$HOME/.cloudflared/${tunnel_id}.json"
   config_path="$HOME/.cloudflared/config.yml"
 
+  # On Windows, convert the path to native form before writing into the
+  # YAML — cloudflared.exe is a native binary and does not understand
+  # Git Bash's POSIX-style /c/... paths.
+  cred_file_for_yaml="$cred_file"
+  if [ "$OS" = "windows" ] && command -v cygpath >/dev/null 2>&1; then
+    cred_file_for_yaml=$(cygpath -w "$cred_file")
+  fi
+
   {
     echo "tunnel: $tunnel_id"
-    echo "credentials-file: $cred_file"
+    echo "credentials-file: $cred_file_for_yaml"
     echo "ingress:"
     local i
     read_routes
@@ -497,32 +533,79 @@ except Exception: sys.exit(1)
 route_dns() {
   local tunnel_name
   tunnel_name=$(get_tunnel_name)
-  local -a routed=() need_route=()
   read_routes
   if [ "${#__ROUTE_DOMAINS[@]}" -eq 0 ]; then
+    echo "No domains in cloudfare.yml — skipping DNS routing."
     return
   fi
 
-  # Read currently-routed domains (from the live config.yml) into array
-  local d
-  while IFS=$'\t' read -r d _ _; do
-    [ -n "$d" ] && routed+=("$d")
-  done < <(parse_tunnel_routes)
-
+  # `--overwrite-dns` is idempotent, so simply (re)route every domain.
   local i
   for ((i = 0; i < ${#__ROUTE_DOMAINS[@]}; i++)); do
-    need_route+=("${__ROUTE_DOMAINS[$i]}")
+    echo "Routing DNS: ${__ROUTE_DOMAINS[$i]} -> tunnel $tunnel_name"
+    cloudflared tunnel route dns --overwrite-dns "$tunnel_name" "${__ROUTE_DOMAINS[$i]}" 2>&1 | sed 's/^/    /'
   done
+}
 
-  if [ "${#need_route[@]}" -eq 0 ]; then
-    echo "No domains need DNS routing (all already present in config.yml)."
-    return
+# Windows-only: the Cloudflared service runs as LocalSystem, whose home
+# is C:\Windows\System32\config\systemprofile — separate from the user's
+# ~/.cloudflared. Copy cert + credentials + config.yml there so the
+# service can actually start.
+# Ref: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/as-a-service/windows/
+
+get_windows_system_profile_dir_native() {
+  local sysroot="${SystemRoot:-${windir:-C:\\Windows}}"
+  echo "${sysroot}\\System32\\config\\systemprofile\\.cloudflared"
+}
+
+get_windows_system_profile_dir_posix() {
+  local sysroot="${SystemRoot:-${windir:-C:\\Windows}}"
+  if command -v cygpath >/dev/null 2>&1; then
+    echo "$(cygpath -u "$sysroot")/System32/config/systemprofile/.cloudflared"
+  else
+    echo "/c/Windows/System32/config/systemprofile/.cloudflared"
+  fi
+}
+
+sync_windows_system_profile() {
+  local tunnel_name tunnel_id sys_dir_posix sys_dir_native
+  tunnel_name=$(get_tunnel_name)
+  tunnel_id=$(get_tunnel_id "$tunnel_name")
+  sys_dir_posix=$(get_windows_system_profile_dir_posix)
+  sys_dir_native=$(get_windows_system_profile_dir_native)
+
+  echo "Syncing credentials into the Windows service account profile ($sys_dir_native)..."
+  if ! mkdir -p "$sys_dir_posix" 2>/dev/null; then
+    echo "❌ Could not create $sys_dir_native — make sure Git Bash is running as Administrator."
+    return 1
   fi
 
-  for d in "${need_route[@]}"; do
-    echo "Routing DNS: $d -> tunnel $tunnel_name"
-    cloudflared tunnel route dns --overwrite-dns "$tunnel_name" "$d" 2>&1 | sed 's/^/    /'
-  done
+  if ! cp -f "$HOME/.cloudflared/cert.pem" "$sys_dir_posix/cert.pem" 2>/dev/null; then
+    echo "❌ Could not copy cert.pem into the service profile (Administrator rights required)."
+    return 1
+  fi
+
+  if [ -z "$tunnel_id" ]; then
+    echo "❌ Could not determine tunnel ID — skipping service profile sync."
+    return 1
+  fi
+
+  cp -f "$HOME/.cloudflared/${tunnel_id}.json" "$sys_dir_posix/${tunnel_id}.json" 2>/dev/null
+
+  {
+    echo "tunnel: $tunnel_id"
+    echo "credentials-file: ${sys_dir_native}\\${tunnel_id}.json"
+    echo "ingress:"
+    local i
+    read_routes
+    for ((i = 0; i < ${#__ROUTE_DOMAINS[@]}; i++)); do
+      echo "  - hostname: ${__ROUTE_DOMAINS[$i]}"
+      echo "    service: http://localhost:${__ROUTE_PORTS[$i]}"
+    done
+    echo "  - service: http_status:404"
+  } > "$sys_dir_posix/config.yml"
+
+  echo "✅ Service profile synced."
 }
 
 restart_service() {
@@ -538,6 +621,7 @@ restart_service() {
       ;;
     windows)
       echo "⚠️  This step requires Git Bash to be running as Administrator."
+      sync_windows_system_profile
       if sc.exe query Cloudflared >/dev/null 2>&1; then
         echo "Restarting the Cloudflared service..."
         net stop Cloudflared
