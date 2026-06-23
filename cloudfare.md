@@ -52,6 +52,27 @@ Script tự sync + restart service. Truy cập `https://myapp.ngthientrung.com` 
 
 Sửa `cloudfare.yml` rồi chạy lại `bash cloudfare.sh` — không cần nhập gì trên terminal.
 
+## Khi nào cần chạy lại `bash cloudfare.sh`?
+
+- **Thêm / sửa / xoá route** trong `cloudfare.yml`.
+- **Đổi tên tunnel** (override `tunnel_name:` trong `cloudfare.yml`).
+- **Cập nhật `cloudflared`** lên phiên bản mới.
+
+## Khi nào KHÔNG cần chạy lại?
+
+- **Khởi động lại máy** hoặc đổi mạng (Wi-Fi → 4G, IP WAN mới…). Cloudflare Tunnel hoạt động qua outbound connection — IP công cộng của bạn không nằm trong đường đi của traffic, nên service tự phục hồi khi máy lên lại.
+- **App local bị crash** rồi khởi động lại. Tunnel vẫn chạy, chỉ cần app nghe lại đúng port.
+
+## Khi nào cần login lại?
+
+Login Cloudflare chỉ cần **1 lần duy nhất** trên mỗi máy. Chỉ cần login lại khi:
+
+- Xoá file `~/.cloudflared/cert.pem` (hoặc `C:\Users\<you>\.cloudflared\cert.pem` trên Windows).
+- Đổi tài khoản Cloudflare dùng để quản lý zone này.
+- Revoke cert trong Cloudflare Dashboard → **Zero Trust → Networks → Tunnels → (tunnel) → Configure → Revoke**.
+
+Các lần chạy lại script thông thường (sửa routes, restart máy, đổi mạng…) **không** yêu cầu login lại.
+
 ## Quyền
 
 macOS: script tự hỏi `sudo` khi cài launchd service. Windows 11: chạy Git Bash với quyền Administrator. Linux / WSL: chỉ in hướng dẫn chạy thủ công.
