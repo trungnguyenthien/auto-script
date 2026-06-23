@@ -212,16 +212,32 @@ init_config() {
   local default_tunnel_name
   default_tunnel_name="tunnel-$(safe_hostname)"
 
-  cat <<EOF
-❌ Config file not found: $CONFIG_FILE
+  echo ""
+  echo "❌ Config file not found: $CONFIG_FILE"
+  echo ""
+  echo "Creating a starter file with one sample route."
+  echo "Edit it (replace the sample domain/port with your own), then"
+  echo "re-run this script to sync with Cloudflare."
+  echo ""
 
-Default tunnel name for this machine: $default_tunnel_name
+  cat > "$CONFIG_FILE" <<EOF
+# tunnel_name: $default_tunnel_name   # (optional; uncomment to override)
 
-Create $CONFIG_FILE like this, then re-run the script:
-
-# tunnel_name: $default_tunnel_name   # (optional)
+# One route per line:  <domain> <port>
+# Lines starting with '#' are comments.
+# Replace the sample below with your real domain and local port.
 myapp.ngthientrung.com 12345
 EOF
+
+  echo "✅ Created $CONFIG_FILE"
+  echo ""
+  echo "👉 Open the file, edit the route, then run:  bash $SCRIPT_DIR/cloudfare.sh"
+  echo ""
+
+  # Wait for user to read the message (in a TTY). Skip if not interactive.
+  if [ -t 0 ]; then
+    read -r -p "Press Enter to exit (or Ctrl+C to abort)..."
+  fi
   exit 0
 }
 
