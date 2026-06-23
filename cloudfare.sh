@@ -52,16 +52,13 @@ fi
 # and that step will prompt for the password itself.
 if [ "$(id -u)" -eq 0 ]; then
   echo ""
-  echo "❌ Please do NOT run cloudfare.sh with sudo / as root."
-  echo ""
-  echo "   Homebrew refuses to run as root (security), so the install"
-  echo "   step will fail and the rest of the script cannot proceed."
+  echo "❌ Do NOT run cloudfare.sh with sudo / as root."
+  echo "   Homebrew refuses to run as root, so the install step would fail."
   echo ""
   echo "   Run it as your normal user instead:"
   echo "     bash $SCRIPT_DIR/cloudfare.sh"
   echo ""
-  echo "   When the script reaches the 'restart service' step, it will"
-  echo "   prompt you for the sudo / Administrator password on its own."
+  echo "   The 'restart service' step will prompt for sudo on its own."
   echo ""
   exit 1
 fi
@@ -72,36 +69,20 @@ print_intro() {
   echo "                CLOUDFLARE TUNNEL MANAGER"
   echo "================================================================="
   echo ""
-  echo "📌 CHỨC NĂNG CHÍNH"
-  echo "   • Quản lý danh sách ánh xạ: local port  <->  domain"
-  echo "   • Tự động cấu hình Cloudflare Tunnel để mỗi domain trỏ"
-  echo "     thẳng về app đang chạy trên máy này (qua localhost:port)"
-  echo "   • Không cần mở port trên router/NAT"
-  echo "   • Cài tunnel thành service hệ thống — tự khởi động lại"
-  echo "     sau khi reboot"
+  echo "What it does"
+  echo "  • Maps each domain to a local port (localhost:<port>)"
+  echo "  • Configures a Cloudflare Tunnel — no router/NAT forwarding"
+  echo "  • Installs the tunnel as a system service (auto-restart on boot)"
   echo ""
-  echo "📋 YÊU CẦU TỐI THIỂU"
-  echo ""
-  echo "  1) Cấu hình Cloudflare"
-  echo "     - Domain phải ĐÃ dùng Cloudflare làm DNS"
-  echo "       (zone phải tồn tại trong tài khoản Cloudflare của bạn)"
-  echo ""
-  echo "  2) Công cụ"
-  echo "     - cloudflared     : Cloudflare Tunnel daemon"
-  echo "       (script sẽ TỰ CÀI qua Homebrew / winget / choco"
-  echo "        nếu máy chưa có — KHÔNG chạy script với sudo)"
-  echo ""
-  echo "  3) Chứng thực (chỉ cần thực hiện 1 lần trên máy này)"
-  echo "     - Cloudflare login → sinh file ~/.cloudflared/cert.pem"
-  echo "       (script sẽ tự hướng dẫn khi cần)"
-  echo "     - macOS: cần quyền sudo để cài launchd service"
-  echo "     - Windows 11: chạy Git Bash với quyền Administrator"
-  echo "       để cài Windows Service"
-  echo ""
-  echo "  4) File cấu hình: $CONFIG_FILE"
-  echo "     - User chỉ cần sửa $CONFIG_FILE rồi chạy lại script —"
-  echo "       mọi route sẽ được TỰ ĐỘNG đồng bộ với Cloudflare"
-  echo "       (không cần nhập gì trên terminal)"
+  echo "Requirements"
+  echo "  1) Your domain must use Cloudflare DNS (zone exists in CF account)"
+  echo "  2) cloudflared installed (script auto-installs via brew / winget /"
+  echo "     choco). Do NOT run this script with sudo."
+  echo "  3) Cloudflare login — one-time, guided by the script"
+  echo "     - macOS: sudo needed at the restart-service step"
+  echo "     - Windows 11: run Git Bash as Administrator"
+  echo "  4) Config file: $CONFIG_FILE"
+  echo "     Edit it, re-run the script → routes auto-sync. No terminal input."
   echo ""
   echo "================================================================="
   echo ""
@@ -234,32 +215,30 @@ init_config() {
   cat <<EOF
 ❌ Config file not found: $CONFIG_FILE
 
-The default tunnel name for this machine would be: $default_tunnel_name
+Default tunnel name for this machine: $default_tunnel_name
 
-Please create $CONFIG_FILE with the content below, then run this script again:
+Create $CONFIG_FILE like this, then re-run the script:
 
-# tunnel_name: $default_tunnel_name   # (optional; uncomment to override)
+# tunnel_name: $default_tunnel_name   # (optional)
 myapp.ngthientrung.com 12345
-api.ngthientrung.com 3000
 EOF
   exit 0
 }
 
 list_entries() {
   echo ""
-  echo "===== Current routes (from cloudfare.yml) ====="
+  echo "Routes (from cloudfare.yml):"
   local count
   count=$(route_count)
   if [ "$count" -eq 0 ]; then
-    echo "  (no entries yet)"
+    echo "  (none)"
   else
     local i
     read_routes
     for ((i = 0; i < ${#__ROUTE_DOMAINS[@]}; i++)); do
-      echo "  - Port ${__ROUTE_PORTS[$i]}  ->  ${__ROUTE_DOMAINS[$i]}"
+      echo "  - ${__ROUTE_DOMAINS[$i]}  ->  :${__ROUTE_PORTS[$i]}"
     done
   fi
-  echo "==============================================="
   echo ""
 }
 
@@ -271,24 +250,65 @@ ensure_login() {
     return
   fi
 
+  local choice
   echo ""
   echo "===== CLOUDFLARE LOGIN (one-time on this machine) ====="
-  echo "1. cloudflared will open: https://dash.cloudflare.com/argotunnel"
-  echo "2. Log in to your Cloudflare account."
-  echo "3. Select the domain (zone) you want to use for this tunnel."
-  echo "4. Click 'Authorize'."
-  echo "   (No browser? Copy the link to another device — same steps.)"
-  echo "This script auto-receives the result. Just wait."
-  echo "======================================================="
+  echo "1) Login from THIS machine (opens browser here)"
+  echo "2) Login from ANOTHER machine (copies URL to clipboard)"
+  read -r -p "Your choice (1-2): " choice
   echo ""
 
-  cloudflared tunnel login
+  case "$choice" in
+    1)
+      cloudflared tunnel login
+      ;;
+    2)
+      local login_url="https://dash.cloudflare.com/argotunnel"
+      echo "Open this URL on another machine (where you can log in):"
+      echo "  $login_url"
+      if copy_to_clipboard "$login_url"; then
+        echo "✅ Copied to clipboard."
+      else
+        echo "(Could not copy automatically — please copy it manually.)"
+      fi
+      echo ""
+      echo "On that machine: log in → select your domain → click 'Authorize'."
+      echo "This script auto-receives the result. Just wait."
+      echo "======================================================="
+      echo ""
+
+      cloudflared tunnel login --loginURL "$login_url"
+      ;;
+    *)
+      echo "Invalid choice."
+      return 1
+      ;;
+  esac
 
   if [ ! -f "$cert_path" ]; then
     echo "❌ cert.pem was not found after login. Please check and re-run the script."
     exit 1
   fi
   echo "✅ Successfully logged in to Cloudflare on this machine."
+}
+
+# Copy a string to the OS clipboard. Returns 0 on success, 1 otherwise.
+copy_to_clipboard() {
+  local text="$1"
+  case "$OS" in
+    mac)        printf "%s" "$text" | pbcopy ;;
+    windows)    printf "%s" "$text" | clip.exe ;;
+    linux|wsl)
+      if command -v xclip >/dev/null 2>&1; then
+        printf "%s" "$text" | xclip -selection clipboard
+      elif command -v wl-copy >/dev/null 2>&1; then
+        printf "%s" "$text" | wl-copy
+      else
+        return 1
+      fi
+      ;;
+    *)          return 1 ;;
+  esac
 }
 
 get_tunnel_id() {
@@ -429,24 +449,25 @@ show_full_status() {
   config_path="$HOME/.cloudflared/config.yml"
 
   echo ""
-  echo "================== CURRENT FULL CONFIGURATION ==================="
-  echo "Machine (hostname): $(hostname 2>/dev/null || echo "?")"
-  echo "Tunnel name:         $tunnel_name"
-  echo "Tunnel ID:           ${tunnel_id:-"(could not determine - check the tunnel creation step)"}"
-  echo "config.yml path:     $config_path"
+  echo "=== STATUS ==="
+  echo "Hostname:        $(hostname 2>/dev/null || echo "?")"
+  echo "Tunnel name:     $tunnel_name"
+  echo "Tunnel ID:       ${tunnel_id:-"(unknown)"}"
+  echo "config.yml:      $config_path"
+  echo "Config source:   $CONFIG_FILE"
   echo ""
-  echo "Tunnel connection status:"
+  echo "Tunnel connection:"
   if [ -n "$tunnel_id" ]; then
     cloudflared tunnel info "$tunnel_name" 2>&1 | sed 's/^/  /'
   else
-    echo "  (could not retrieve tunnel info)"
+    echo "  (unavailable)"
   fi
   echo ""
-  echo "Active routes (from $CONFIG_FILE):"
+  echo "Active routes:"
   local count
   count=$(route_count)
   if [ "$count" -eq 0 ]; then
-    echo "  (no entries yet)"
+    echo "  (none)"
   else
     local i
     read_routes
@@ -454,13 +475,13 @@ show_full_status() {
       echo "  - https://${__ROUTE_DOMAINS[$i]}  ->  http://localhost:${__ROUTE_PORTS[$i]}"
     done
   fi
-  echo "==================================================================="
+  echo "==============="
   echo ""
 }
 
 sync_cloudflare() {
   echo ""
-  echo ">>> Syncing configuration to Cloudflare..."
+  echo ">>> Syncing to Cloudflare..."
   ensure_login
   ensure_tunnel
   write_config_yml
@@ -475,15 +496,14 @@ sync_cloudflare() {
 main_menu() {
   while true; do
     list_entries
-    echo "Choose an option below by typing its number, then press Enter."
-    echo "1) Sync now (re-apply the current cloudfare.yml to Cloudflare)"
-    echo "2) Show status (full configuration & tunnel info)"
+    echo "1) Sync now"
+    echo "2) Show status"
     echo "3) Exit"
-    read -r -p "Your choice (1-3): " choice
+    read -r -p "Choice (1-3): " choice
     case "$choice" in
       1) sync_cloudflare ;;
       2) show_full_status ;;
-      3) echo "Goodbye!"; exit 0 ;;
+      3) echo "Bye!"; exit 0 ;;
       *) echo "Invalid choice." ;;
     esac
   done
